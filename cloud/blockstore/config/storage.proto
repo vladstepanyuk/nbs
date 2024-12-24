@@ -1101,4 +1101,7 @@ message TStorageServiceConfig
     // Number of ranges to process in a single Compaction run
     // in the range mode if batch compaction enabled.
     optional uint32 ForcedCompactionRangeCountPerRun = 401;
+
+    // Enabling direct sending AcquireDevices to disk agent.
+    optional bool UseDirectAcquireReleaseDevicesSending = 402;
 }
