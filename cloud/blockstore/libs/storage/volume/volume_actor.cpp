@@ -1121,6 +1121,7 @@ STFUNC(TVolumeActor::StateZombie)
 
         HFunc(TEvents::TEvPoisonPill, HandlePoisonPill);
         HFunc(TEvents::TEvPoisonTaken, HandlePoisonTaken);
+        HFunc(TEvTablet::TEvTabletStop, HandleTabletStop);
 
         IgnoreFunc(TEvLocal::TEvTabletMetrics);
 
