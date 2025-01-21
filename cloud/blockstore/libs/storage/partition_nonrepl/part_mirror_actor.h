@@ -4,6 +4,7 @@
 
 #include "checksum_range.h"
 #include "config.h"
+#include "contrib/ydb/library/actors/interconnect/types.h"
 #include "part_mirror_state.h"
 #include "part_nonrepl_events_private.h"
 
@@ -116,6 +117,8 @@ private:
         const NActors::TActorContext& ctx,
         ui64 scrubbingRangeId);
     void StartResyncRange(const NActors::TActorContext& ctx);
+
+    TResultOrError<TSet<NActors::TActorId>> GetActorsForBlockRange(const TBlockRange64 blockRange);
 
 private:
     STFUNC(StateWork);

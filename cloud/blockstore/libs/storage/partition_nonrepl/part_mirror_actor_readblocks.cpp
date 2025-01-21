@@ -1,6 +1,7 @@
 #include "part_mirror_actor.h"
 
 #include "mirror_request_actor.h"
+#include "part_mirror_split_requests_utils.h"
 
 #include <cloud/blockstore/libs/common/block_checksum.h>
 #include <cloud/blockstore/libs/storage/api/undelivered.h>
@@ -62,6 +63,7 @@ private:
     const TString DiskId;
     const NActors::TActorId ParentActorId;
     const ui64 RequestIdentityKey;
+    const bool SendResponseToParent;
 
     using TResponseProto = typename TMethod::TResponse::ProtoRecordType;
     using TBase = TActorBootstrapped<TRequestActor<TMethod>>;
@@ -79,7 +81,8 @@ public:
         const TBlockRange64 range,
         TString diskId,
         TActorId parentActorId,
-        ui64 requestIdentityKey);
+        ui64 requestIdentityKey,
+        bool sendResponseToParent);
 
     void Bootstrap(const TActorContext& ctx);
 
@@ -123,7 +126,8 @@ TRequestActor<TMethod>::TRequestActor(
         const TBlockRange64 range,
         TString diskId,
         TActorId parentActorId,
-        ui64 requestIdentityKey)
+        ui64 requestIdentityKey,
+        bool sendResponseToParent)
     : RequestInfo(std::move(requestInfo))
     , Partitions(partitions)
     , Request(std::move(request))
@@ -132,6 +136,7 @@ TRequestActor<TMethod>::TRequestActor(
     , ParentActorId(parentActorId)
     , RequestIdentityKey(requestIdentityKey)
     , ResponseChecksums(Partitions.size(), 0)
+    , SendResponseToParent(sendResponseToParent)
 {}
 
 template <typename TMethod>
@@ -224,13 +229,17 @@ void TRequestActor<TMethod>::Done(const TActorContext& ctx)
     auto response = std::make_unique<typename TMethod::TResponse>();
     response->Record = std::move(Response);
 
-    NCloud::Reply(ctx, *RequestInfo, std::move(response));
+    if (SendResponseToParent) {
+        NCloud::Send(ctx, ParentActorId, std::move(response));
+    } else {
+        NCloud::Reply(ctx, *RequestInfo, std::move(response));
 
-    auto completion =
-        std::make_unique<TEvNonreplPartitionPrivate::TEvMirroredReadCompleted>(
+        auto completion = std::make_unique<
+            TEvNonreplPartitionPrivate::TEvMirroredReadCompleted>(
             RequestIdentityKey,
             ChecksumMismatchObserved);
-    NCloud::Send(ctx, ParentActorId, std::move(completion));
+        NCloud::Send(ctx, ParentActorId, std::move(completion));
+    }
 
     TBase::Die(ctx);
 }
@@ -387,6 +396,255 @@ STFUNC(TRequestActor<TMethod>::StateWork)
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
+template <typename TMethod>
+class TSplittedRequestActor final
+    : public TActorBootstrapped<TRequestActor<TMethod>>
+{
+private:
+    using TRequestRecordType = TMethod::TRequest::ProtoRecordType;
+    using TResponseRecordType = TMethod::TResponse::ProtoRecordType;
+
+    class TChildActorsInfo {
+    private:
+        THashMap<TActorId, size_t> ActorId2Index;
+        TVector<TResponseRecordType> Responses;
+        TVector<bool> ReceivedResponseFromActor;
+
+    public:
+        TChildActorsInfo(
+                THashMap<TActorId, size_t> actorIds,
+                TVector<TResponseRecordType> responses)
+            : ActorId2Index(std::move(actorIds))
+            , Responses(std::move(responses))
+            , ReceivedResponseFromActor(ActorId2Index.size(), false)
+        {}
+
+        bool ReceivedResponseFrom(const TActorId& id)
+        {
+            auto it = ActorId2Index.find(id);
+            if (it == ActorId2Index.end()) {
+                return false;
+            }
+
+            return ReceivedResponseFromActor[it->second];
+        }
+
+        TResponseRecordType* GetResponseFrom(const TActorId& id)
+        {
+            auto it = ActorId2Index.find(id);
+            if (it == ActorId2Index.end() ||
+                !ReceivedResponseFromActor[it->second])
+            {
+                return nullptr;
+            }
+
+            return &Responses[it->second];
+        }
+
+        void SetResponseFrom(const TActorId& id, TResponseRecordType response)
+        {
+            auto it = ActorId2Index.find(id);
+            if (it == ActorId2Index.end()) {
+                return;
+            }
+
+            Responses[it->second] = std::move(response);
+            ReceivedResponseFromActor[it->second] = true;
+        }
+
+        static TVector<TResponseRecordType> ExtractResponses(
+            TChildActorsInfo childActorsInfo)
+        {
+            return std::move(childActorsInfo.Responses);
+        }
+    };
+
+private:
+    const TRequestInfoPtr RequestInfo;
+    NSplitRequest::TSplittedRequest<TMethod> Requests;
+    const TString DiskId;
+    const NActors::TActorId ParentActorId;
+    const ui64 RequestIdentityKey;
+
+    ui32 PendingRequests = 0;
+
+
+
+    TChildActorsInfo ChildActors;
+
+    using TResponseProto = typename TMethod::TResponse::ProtoRecordType;
+    using TBase = TActorBootstrapped<TRequestActor<TMethod>>;
+
+    TVector<ui32> ResponseChecksums;
+    ui32 ResponseCount = 0;
+    TResponseProto Response;
+    bool ChecksumMismatchObserved = false;
+
+public:
+    TSplittedRequestActor(
+        TRequestInfoPtr requestInfo,
+        NSplitRequest::TSplittedRequest<TMethod> requests,
+        TString diskId,
+        TActorId parentActorId,
+        ui64 requestIdentityKey);
+
+    void Bootstrap(const TActorContext& ctx);
+
+private:
+    void ReplyAndDie(const TActorContext& ctx, NProto::TError error);
+
+    void OnActorResponse(
+        const TMethod::TResponse::TPtr& ev,
+        const TActorContext& ctx);
+
+private:
+    STFUNC(StateWork);
+
+    void HandleActorResponse(
+        const TMethod::TResponse::TPtr& ev,
+        const TActorContext& ctx);
+
+    void HandlePoisonPill(
+        const TEvents::TEvPoisonPill::TPtr& ev,
+        const TActorContext& ctx);
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
+template <typename TMethod>
+TSplittedRequestActor<TMethod>::TSplittedRequestActor(
+        TRequestInfoPtr requestInfo,
+        NSplitRequest::TSplittedRequest<TMethod> requests,
+        TString diskId,
+        TActorId parentActorId,
+        ui64 requestIdentityKey)
+    : RequestInfo(std::move(requestInfo))
+    , Requests(std::move(requests))
+    , DiskId(std::move(diskId))
+    , ParentActorId(parentActorId)
+    , RequestIdentityKey(requestIdentityKey)
+{}
+
+template <typename TMethod>
+void TSplittedRequestActor<TMethod>::Bootstrap(const TActorContext& ctx)
+{
+    THashMap<TActorId, size_t> actorIds;
+    actorIds.reserve(Requests.size());
+    TVector<std::optional<TResponseRecordType>> responses;
+    responses.reserve(Requests.size());
+    for (auto& [request, partitions, blockSubRange]: Requests) {
+        auto actorId = NCloud::Register<TRequestActor<TMethod>>(
+            ctx,
+            RequestInfo,
+            std::move(partitions),
+            std::move(request),
+            blockSubRange,
+            DiskId,
+            ctx.SelfID,
+            RequestIdentityKey,
+            true   // sendResponseToParent
+        );
+        ++PendingRequests;
+        actorIds[actorId] = responses.size();
+        responses.push_back(std::nullopt);
+    }
+
+    ChildActors = TChildActorsInfo(std::move(actorIds), std::move(responses));
+    TBase::Become(&TBase::TThis::StateWork);
+}
+
+template <typename TMethod>
+void TSplittedRequestActor<TMethod>::ReplyAndDie(
+    const TActorContext& ctx,
+    NProto::TError error)
+{
+    auto constructResponse = [&]()
+    {
+        if (HasError(error)) {
+            return std::make_unique<typename TMethod::TResponse>(
+                std::move(error));
+        }
+
+        auto allResponses =
+            TChildActorsInfo::ExtractResponses(std::move(ChildActors));
+        auto responseToReply =
+            NSplitRequest::UnifyResponses<TMethod>(allResponses);
+
+        return std::make_unique<typename TMethod::TResponse>(
+            std::move(responseToReply));
+    };
+
+    NCloud::Reply(ctx, *RequestInfo, constructResponse());
+
+    TBase::Die(ctx);
+}
+
+template <typename TMethod>
+void TSplittedRequestActor<TMethod>::OnActorResponse(
+    const TMethod::TResponse::TPtr& ev,
+    const TActorContext& ctx)
+{
+    auto* msg = ev->Get();
+    if (HasError(msg->GetError())) {
+        for (const auto& [actorId, _]: ChildActors.ActorId2Index) {
+            if (ChildActors.ReceivedResponseFrom(actorId)) {
+                continue;
+            }
+
+            NCloud::Send(ctx, actorId, new TEvents::TEvPoisonPill());
+        }
+
+        ReplyAndDie(ctx, std::move(msg->GetError()));
+        return;
+    }
+
+    ChildActors.SetResponseFrom(ev->Sender, std::move(msg->Record));
+
+    if (--PendingRequests == 0) {
+        ReplyAndDie(ctx, {});
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+template <typename TMethod>
+STFUNC(TSplittedRequestActor<TMethod>::StateWork)
+{
+    TRequestScope timer(*RequestInfo);
+
+    switch (ev->GetTypeRewrite()) {
+        HFunc(TEvents::TEvPoisonPill, HandlePoisonPill);
+
+        HFunc(TMethod::TResponse, HandleActorResponse);
+
+        default:
+            HandleUnexpectedEvent(ev, TBlockStoreComponents::PARTITION_WORKER);
+            break;
+    }
+}
+
+template <typename TMethod>
+void TSplittedRequestActor<TMethod>::HandleActorResponse(
+    const TMethod::TResponse::TPtr& ev,
+    const TActorContext& ctx)
+{
+    OnActorResponse(ev, ctx);
+}
+
+template <typename TMethod>
+void TSplittedRequestActor<TMethod>::HandlePoisonPill(
+    const TEvents::TEvPoisonPill::TPtr& ev,
+    const TActorContext& ctx)
+{
+    Y_UNUSED(ev);
+
+    ReplyAndDie(ctx, MakeTabletIsDeadError(E_REJECTED, __LOCATION__));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 }   // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -427,42 +685,73 @@ void TMirrorPartitionActor::ReadBlocks(
         return;
     }
 
-    TSet<TActorId> replicaActorIds;
-    const ui32 readReplicaCount = Min<ui32>(
-        Max<ui32>(1, Config->GetMirrorReadReplicaCount()),
-        State.GetReplicaInfos().size());
-    for (ui32 i = 0; i < readReplicaCount; ++i) {
-        TActorId replicaActorId;
-        const auto error = State.NextReadReplica(blockRange, &replicaActorId);
-        if (HasError(error)) {
-            Reply(
-                ctx,
-                *requestInfo,
-                std::make_unique<typename TMethod::TResponse>(error));
+    auto actorIdsOrError = GetActorsForBlockRange(blockRange);
+    if (!actorIdsOrError.HasError()) {
+        auto replicaActorIds = actorIdsOrError.ExtractResult();
 
+        LOG_DEBUG(
+            ctx,
+            TBlockStoreComponents::PARTITION_WORKER,
+            "[%s] Will read %s from %u replicas",
+            DiskId.c_str(),
+            DescribeRange(blockRange).c_str(),
+            replicaActorIds.size());
+
+        const auto requestIdentityKey = ev->Cookie;
+        RequestsInProgress.AddReadRequest(requestIdentityKey, blockRange);
+
+        NCloud::Register<TRequestActor<TMethod>>(
+            ctx,
+            std::move(requestInfo),
+            TVector<TActorId>(replicaActorIds.begin(), replicaActorIds.end()),
+            std::move(record),
+            blockRange,
+            State.GetReplicaInfos()[0].Config->GetName(),
+            SelfId(),
+            requestIdentityKey,
+            false   // sendResponseToParent
+        );
+
+        return;
+    }
+
+    auto blockRangeSplittedByDeviceBorders = State.SplitRangeByDeviceBorders(blockRange);
+    TVector<THashSet<TActorId>> actorIdsForRequests;
+    for (auto blockSubRange: blockRangeSplittedByDeviceBorders) {
+        auto actorIdsOrError = GetActorsForBlockRange(blockSubRange);
+        if (actorIdsOrError.HasError()) {
+            NCloud::Reply(
+                ctx,
+                *ev,
+                std::make_unique<typename TMethod::TResponse>(
+                    actorIdsOrError.GetError()));
             return;
         }
 
-        if (!replicaActorIds.insert(replicaActorId).second) {
-            break;
-        }
+        actorIdsForRequests.emplace_back(actorIdsOrError.ExtractResult());
     }
 
-    LOG_DEBUG(ctx, TBlockStoreComponents::PARTITION_WORKER,
-        "[%s] Will read %s from %u replicas",
-        DiskId.c_str(),
-        DescribeRange(blockRange).c_str(),
-        replicaActorIds.size());
+    auto splittedRequest = NSplitRequest::SplitRequest<TMethod>(
+        record,
+        blockRangeSplittedByDeviceBorders,
+        actorIdsForRequests);
+
+    if (!splittedRequest) {
+        NCloud::Reply(
+            ctx,
+            *ev,
+            std::make_unique<typename TMethod::TResponse>(
+                MakeError(E_INVALID_STATE, "can't split request")));
+        return;
+    }
 
     const auto requestIdentityKey = ev->Cookie;
     RequestsInProgress.AddReadRequest(requestIdentityKey, blockRange);
 
-    NCloud::Register<TRequestActor<TMethod>>(
+    NCloud::Register<TSplittedRequestActor<TMethod>>(
         ctx,
         std::move(requestInfo),
-        TVector<TActorId>(replicaActorIds.begin(), replicaActorIds.end()),
-        std::move(record),
-        blockRange,
+        std::move(splittedRequest),
         State.GetReplicaInfos()[0].Config->GetName(),
         SelfId(),
         requestIdentityKey);
