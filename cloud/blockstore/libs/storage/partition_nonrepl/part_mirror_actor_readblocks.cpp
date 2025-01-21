@@ -427,45 +427,52 @@ void TMirrorPartitionActor::ReadBlocks(
         return;
     }
 
-    TSet<TActorId> replicaActorIds;
-    const ui32 readReplicaCount = Min<ui32>(
-        Max<ui32>(1, Config->GetMirrorReadReplicaCount()),
-        State.GetReplicaInfos().size());
-    for (ui32 i = 0; i < readReplicaCount; ++i) {
-        TActorId replicaActorId;
-        const auto error = State.NextReadReplica(blockRange, &replicaActorId);
-        if (HasError(error)) {
-            Reply(
-                ctx,
-                *requestInfo,
-                std::make_unique<typename TMethod::TResponse>(error));
+    auto actorIdsOrError = GetActorsForBlockRange(blockRange);
+    if (!actorIdsOrError.HasError()) {
+        auto replicaActorIds = actorIdsOrError.ExtractResult();
 
+        LOG_DEBUG(
+            ctx,
+            TBlockStoreComponents::PARTITION_WORKER,
+            "[%s] Will read %s from %u replicas",
+            DiskId.c_str(),
+            DescribeRange(blockRange).c_str(),
+            replicaActorIds.size());
+
+        const auto requestIdentityKey = ev->Cookie;
+        RequestsInProgress.AddReadRequest(requestIdentityKey, blockRange);
+
+        NCloud::Register<TRequestActor<TMethod>>(
+            ctx,
+            std::move(requestInfo),
+            TVector<TActorId>(replicaActorIds.begin(), replicaActorIds.end()),
+            std::move(record),
+            blockRange,
+            State.GetReplicaInfos()[0].Config->GetName(),
+            SelfId(),
+            requestIdentityKey);
+
+        return;
+    }
+
+    auto splittedRequest = State.SplitRangeByDeviceBorders(blockRange);
+    TVector<TSet<TActorId>> actorIdsForRequests;
+    for (auto [_, blockSubRange]: splittedRequest) {
+        auto actorIdsOrError = GetActorsForBlockRange(blockSubRange);
+        if (actorIdsOrError.HasError()) {
+            NCloud::Reply(
+                ctx,
+                *ev,
+                std::make_unique<typename TMethod::TResponse>(
+                    actorIdsOrError.GetError()));
             return;
         }
 
-        if (!replicaActorIds.insert(replicaActorId).second) {
-            break;
-        }
+        actorIdsForRequests.emplace_back(actorIdsOrError.ExtractResult());
     }
 
-    LOG_DEBUG(ctx, TBlockStoreComponents::PARTITION_WORKER,
-        "[%s] Will read %s from %u replicas",
-        DiskId.c_str(),
-        DescribeRange(blockRange).c_str(),
-        replicaActorIds.size());
+    ///
 
-    const auto requestIdentityKey = ev->Cookie;
-    RequestsInProgress.AddReadRequest(requestIdentityKey, blockRange);
-
-    NCloud::Register<TRequestActor<TMethod>>(
-        ctx,
-        std::move(requestInfo),
-        TVector<TActorId>(replicaActorIds.begin(), replicaActorIds.end()),
-        std::move(record),
-        blockRange,
-        State.GetReplicaInfos()[0].Config->GetName(),
-        SelfId(),
-        requestIdentityKey);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

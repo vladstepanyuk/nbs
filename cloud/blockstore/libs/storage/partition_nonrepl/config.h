@@ -266,6 +266,29 @@ public:
         return MakeError(code, std::move(message), flags);
     }
 
+    struct TRangeToDevice {
+        size_t DeviceIndex = std::numeric_limits<size_t>::max();
+        TBlockRange64 BlockRange;
+    };
+
+    TVector<TRangeToDevice> SplitBlockRangeByDevicesBorder(
+        const TBlockRange64 blockRange)
+    {
+        TVector<TRangeToDevice> result;
+        VisitDeviceRequests(
+            blockRange,
+            [&](const ui32 i,
+                const TBlockRange64 requestRange,
+                const TBlockRange64 relativeRange)
+            {
+                Y_UNUSED(relativeRange);
+                result.emplace_back(i, requestRange);
+                return false;
+            });
+
+        return result;
+    }
+
 private:
     TBlockRange64 DeviceRange(ui32 i) const
     {

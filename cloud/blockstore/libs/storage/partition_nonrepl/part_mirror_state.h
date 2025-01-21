@@ -76,6 +76,9 @@ public:
     ui32 GetBlockSize() const;
 
     ui64 GetBlockCount() const;
+
+    TVector<TNonreplicatedPartitionConfig::TRangeToDevice> SplitRangeByDeviceBorders(
+        const TBlockRange64 readRange);
 };
 
 }   // namespace NCloud::NBlockStore::NStorage
