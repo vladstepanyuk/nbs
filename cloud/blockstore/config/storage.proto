@@ -1101,4 +1101,7 @@ message TStorageServiceConfig
     // Number of ranges to process in a single Compaction run
     // in the range mode if batch compaction enabled.
     optional uint32 ForcedCompactionRangeCountPerRun = 401;
+
+    // Timeout for TDestroyVolumeActor (in milliseconds)
+    optional uint32 DestroyVolumeTimeout = 402;
 }
