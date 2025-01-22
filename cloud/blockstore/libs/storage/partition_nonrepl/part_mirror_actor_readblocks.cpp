@@ -397,13 +397,6 @@ STFUNC(TRequestActor<TMethod>::StateWork)
 
 ////////////////////////////////////////////////////////////////////////////////
 
-struct TRequestToPartitions
-{
-    TRecordType Request;
-    TVector<TActorId> Partitions;
-    TBlockRange64 BlockRangeForRequest;
-};
-
 template <typename TMethod>
 class TSplittedRequestActor final
     : public TActorBootstrapped<TRequestActor<TMethod>>
@@ -414,7 +407,7 @@ public:
 
 private:
     const TRequestInfoPtr RequestInfo;
-    const TVector<TRequestToPartitions> RequestsInfo;
+    const TVector<NSplitRequest::TRequestToPartitions<TMethod>> RequestsInfo;
     const TBlockRange64 OriginalRange;
     const TString DiskId;
     const NActors::TActorId ParentActorId;
@@ -431,8 +424,7 @@ private:
 public:
     TSplittedRequestActor(
         TRequestInfoPtr requestInfo,
-        const TVector<TNonreplicatedPartitionConfig::TRangeToDevice>&
-            blockRangeSplittedByDeviceBorders,
+        const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
         const TVector<TVector<TActorId>>& partitions,
         TRecordType originalRequest,
         const TBlockRange64 range,
