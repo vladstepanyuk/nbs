@@ -62,6 +62,7 @@ private:
     const TString DiskId;
     const NActors::TActorId ParentActorId;
     const ui64 RequestIdentityKey;
+    const bool SendResponseToParent;
 
     using TResponseProto = typename TMethod::TResponse::ProtoRecordType;
     using TBase = TActorBootstrapped<TRequestActor<TMethod>>;
@@ -79,7 +80,8 @@ public:
         const TBlockRange64 range,
         TString diskId,
         TActorId parentActorId,
-        ui64 requestIdentityKey);
+        ui64 requestIdentityKey,
+        bool sendResponseToParent);
 
     void Bootstrap(const TActorContext& ctx);
 
@@ -123,7 +125,8 @@ TRequestActor<TMethod>::TRequestActor(
         const TBlockRange64 range,
         TString diskId,
         TActorId parentActorId,
-        ui64 requestIdentityKey)
+        ui64 requestIdentityKey,
+        bool sendResponseToParent)
     : RequestInfo(std::move(requestInfo))
     , Partitions(partitions)
     , Request(std::move(request))
@@ -132,6 +135,7 @@ TRequestActor<TMethod>::TRequestActor(
     , ParentActorId(parentActorId)
     , RequestIdentityKey(requestIdentityKey)
     , ResponseChecksums(Partitions.size(), 0)
+    , SendResponseToParent(sendResponseToParent)
 {}
 
 template <typename TMethod>
@@ -224,13 +228,17 @@ void TRequestActor<TMethod>::Done(const TActorContext& ctx)
     auto response = std::make_unique<typename TMethod::TResponse>();
     response->Record = std::move(Response);
 
-    NCloud::Reply(ctx, *RequestInfo, std::move(response));
+    if (SendResponseToParent) {
+        NCloud::Send(ctx, ParentActorId, std::move(response));
+    } else {
+        NCloud::Reply(ctx, *RequestInfo, std::move(response));
 
-    auto completion =
-        std::make_unique<TEvNonreplPartitionPrivate::TEvMirroredReadCompleted>(
+        auto completion = std::make_unique<
+            TEvNonreplPartitionPrivate::TEvMirroredReadCompleted>(
             RequestIdentityKey,
             ChecksumMismatchObserved);
-    NCloud::Send(ctx, ParentActorId, std::move(completion));
+        NCloud::Send(ctx, ParentActorId, std::move(completion));
+    }
 
     TBase::Die(ctx);
 }
@@ -386,6 +394,88 @@ STFUNC(TRequestActor<TMethod>::StateWork)
             break;
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////
+
+struct TRequestToPartitions
+{
+    TRecordType Request;
+    TVector<TActorId> Partitions;
+    TBlockRange64 BlockRangeForRequest;
+};
+
+template <typename TMethod>
+class TSplittedRequestActor final
+    : public TActorBootstrapped<TRequestActor<TMethod>>
+{
+public:
+    using TRecordType = TMethod::TRequest::ProtoRecordType;
+
+
+private:
+    const TRequestInfoPtr RequestInfo;
+    const TVector<TRequestToPartitions> RequestsInfo;
+    const TBlockRange64 OriginalRange;
+    const TString DiskId;
+    const NActors::TActorId ParentActorId;
+    const ui64 RequestIdentityKey;
+
+    using TResponseProto = typename TMethod::TResponse::ProtoRecordType;
+    using TBase = TActorBootstrapped<TRequestActor<TMethod>>;
+
+    TVector<ui32> ResponseChecksums;
+    ui32 ResponseCount = 0;
+    TResponseProto Response;
+    bool ChecksumMismatchObserved = false;
+
+public:
+    TSplittedRequestActor(
+        TRequestInfoPtr requestInfo,
+        const TVector<TNonreplicatedPartitionConfig::TRangeToDevice>&
+            blockRangeSplittedByDeviceBorders,
+        const TVector<TVector<TActorId>>& partitions,
+        TRecordType originalRequest,
+        const TBlockRange64 range,
+        TString diskId,
+        TActorId parentActorId,
+        ui64 requestIdentityKey);
+
+    void Bootstrap(const TActorContext& ctx);
+
+private:
+    void SendRequests(const TActorContext& ctx);
+    bool HandleError(const TActorContext& ctx, NProto::TError error);
+    void CompareChecksums(const TActorContext& ctx);
+    void Done(const TActorContext& ctx);
+
+private:
+    STFUNC(StateWork);
+
+    void HandleChecksumUndelivery(
+        const TEvNonreplPartitionPrivate::TEvChecksumBlocksRequest::TPtr& ev,
+        const TActorContext& ctx);
+
+    void HandleChecksumResponse(
+        const TEvNonreplPartitionPrivate::TEvChecksumBlocksResponse::TPtr& ev,
+        const TActorContext& ctx);
+
+    void HandleUndelivery(
+        const typename TMethod::TRequest::TPtr& ev,
+        const TActorContext& ctx);
+
+    void HandleResponse(
+        const typename TMethod::TResponse::TPtr& ev,
+        const TActorContext& ctx);
+
+    void HandlePoisonPill(
+        const TEvents::TEvPoisonPill::TPtr& ev,
+        const TActorContext& ctx);
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////////////////////////////////////
 
 }   // namespace
 
