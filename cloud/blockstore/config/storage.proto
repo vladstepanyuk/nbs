@@ -1107,4 +1107,7 @@ message TStorageServiceConfig
     // When enabled, tag "use-intermediate-write-buffer" will be added
     // after scrubbing finds a mismatch
     optional bool AutomaticallyEnableBufferCopyingAfterChecksumMismatch = 403;
+
+    // Timeout for TDestroyVolumeActor (in milliseconds)
+    optional uint32 DestroyVolumeTimeout = 404;
 }

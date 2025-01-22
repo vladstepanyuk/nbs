@@ -633,6 +633,7 @@ public:
     bool GetYdbViewerServiceEnabled() const;
 
     bool GetAutomaticallyEnableBufferCopyingAfterChecksumMismatch() const;
+    [[nodiscard]] TDuration GetDestroyVolumeTimeout() const;
 };
 
 ui64 GetAllocationUnit(
