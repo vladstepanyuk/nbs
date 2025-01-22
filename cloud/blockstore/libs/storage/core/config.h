@@ -630,7 +630,6 @@ public:
 
     [[nodiscard]] bool GetCalculateSplittedUsedQuotaMetric() const;
     [[nodiscard]] TDuration GetDestroyVolumeTimeout() const;
-
 };
 
 ui64 GetAllocationUnit(
