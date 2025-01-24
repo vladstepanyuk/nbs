@@ -11,17 +11,20 @@ namespace NCloud::NBlockStore::NStorage::NSplitRequest {
 ////////////////////////////////////////////////////////////////////////////////
 
 template <typename TMethod>
-using TRecordType = TMethod::TRequest::ProtoRecordType;
+using TRequestRecordType = TMethod::TRequest::ProtoRecordType;
+
+template <typename TMethod>
+using TResponseRecordType = TMethod::TResponse::ProtoRecordType;
 
 template <typename TMethod>
 struct TRequestToPartitions
 {
-    TRecordType<TMethod> Request;
+    TRequestRecordType<TMethod> Request;
     TVector<TActorId> Partitions;
     TBlockRange64 BlockRangeForRequest;
 
     TRequestToPartitions(
-            TRecordType<TMethod> request,
+            TRequestRecordType<TMethod> request,
             TVector<TActorId> partitions,
             TBlockRange64 blockRangeForRequest)
         : Request(std::move(request))
@@ -35,7 +38,7 @@ using TSplittedRequest = TVector<TRequestToPartitions<TMethod>>;
 
 template <typename TMethod>
 std::optional<TSplittedRequest<TMethod>> SplitRequest(
-    const TRecordType<TMethod>& originalRequest,
+    const TRequestRecordType<TMethod>& originalRequest,
     const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
     const TVector<THashSet<TActorId>> partitionsPerDevice)
 {
@@ -57,5 +60,22 @@ SplitRequest(
     const NProto::TReadBlocksLocalRequest& originalRequest,
     const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
     TVector<THashSet<TActorId>> partitionsPerDevice);
+
+NProto::TReadBlocksResponse UnifyResponsesRead(
+    const TVector<NProto::TReadBlocksResponse>& responsesToUnify);
+
+template <typename TMethod>
+TResponseRecordType<TMethod> UnifyResponses(
+    const TVector<TResponseRecordType<TMethod>>& responsesToUnify)
+{
+    if constexpr (
+        std::is_same_v<TMethod, TEvService::TReadBlocksMethod> ||
+        std::is_same_v<TMethod, TEvService::TReadBlocksLocalMethod>)
+    {
+        UnifyResponsesRead(std::move(responsesToUnify));
+    } else {
+        static_assert(false, "Not supported method");
+    }
+}
 
 }   // namespace NSplitRequest

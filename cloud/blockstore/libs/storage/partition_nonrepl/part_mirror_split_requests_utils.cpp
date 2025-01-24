@@ -9,7 +9,7 @@ namespace {
 
 template <typename TMethod>
 NSplitRequest::TSplittedRequest<TMethod> SplitRequestGeneralRead(
-    const NSplitRequest::TRecordType<TMethod>& originalRequest,
+    const TRequestRecordType<TMethod>& originalRequest,
     const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
     TVector<THashSet<TActorId>> partitionsPerDevice)
 {
@@ -18,7 +18,7 @@ NSplitRequest::TSplittedRequest<TMethod> SplitRequestGeneralRead(
 
     for (size_t i = 0; i < blockRangeSplittedByDeviceBorders.size(); ++i) {
         const auto& blockRange = blockRangeSplittedByDeviceBorders[i];
-        NSplitRequest::TRecordType<TMethod> copyRequest = originalRequest;
+        TRequestRecordType<TMethod> copyRequest = originalRequest;
         copyRequest.SetBlocksCount(blockRange.Size());
         copyRequest.SetStartIndex(blockRange.Start);
         TVector<TActorId> partitions(
@@ -36,7 +36,7 @@ NSplitRequest::TSplittedRequest<TMethod> SplitRequestGeneralRead(
 
 template <>
 std::optional<TSplittedRequest<TEvService::TReadBlocksMethod>> SplitRequest(
-    const TRecordType<TEvService::TReadBlocksMethod>& originalRequest,
+    const TRequestRecordType<TEvService::TReadBlocksMethod>& originalRequest,
     const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
     TVector<THashSet<TActorId>> partitionsPerDevice)
 {
@@ -48,7 +48,7 @@ std::optional<TSplittedRequest<TEvService::TReadBlocksMethod>> SplitRequest(
 template <>
 std::optional<TSplittedRequest<TEvService::TReadBlocksLocalMethod>>
 SplitRequest(
-    const TRecordType<TEvService::TReadBlocksLocalMethod>& originalRequest,
+    const TRequestRecordType<TEvService::TReadBlocksLocalMethod>& originalRequest,
     const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
     TVector<THashSet<TActorId>> partitionsPerDevice)
 {
@@ -125,4 +125,28 @@ SplitRequest(
     return result;
 }
 
+NProto::TReadBlocksResponse UnifyResponsesRead(
+    const TVector<NProto::TReadBlocksResponse>& responsesToUnify)
+{
+    NProto::TReadBlocksResponse result;
+    bool allZeros = true;
+    ui64 throttlerDelayMax = 0;
+    for (const auto& response: responsesToUnify) {
+        auto blocks = response.GetBlocks();
+        for (auto buffer: blocks.GetBuffers()) {
+            result.MutableBlocks()->AddBuffers(std::move(buffer));
+        }
+        result.MutableUnencryptedBlockMask()->AppendAscii(
+            response.GetUnencryptedBlockMask());
+
+        throttlerDelayMax =
+            Max(throttlerDelayMax, response.GetThrottlerDelay());
+        allZeros &= response.GetAllZeroes();
+    }
+
+    result.SetThrottlerDelay(throttlerDelayMax);
+    result.SetAllZeroes(allZeros);
+
+    return result;
+}
 }   // namespace NCloud::NBlockStore::NStorage::NSplitRequest

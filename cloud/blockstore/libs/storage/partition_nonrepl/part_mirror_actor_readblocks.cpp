@@ -406,42 +406,64 @@ private:
     using TRequestRecordType = TMethod::TRequest::ProtoRecordType;
     using TResponseRecordType = TMethod::TResponse::ProtoRecordType;
 
-    struct TChildActorsInfo {
-        THashMap<TActorId, size_t> ActorIds;
-        TVector<std::optional<TResponseRecordType>> Responses;
+    class TChildActorsInfo {
+    private:
+        THashMap<TActorId, size_t> ActorId2Index;
+        TVector<TResponseRecordType> Responses;
+        TVector<bool> ReceivedResponseFromActor;
 
+    public:
         TChildActorsInfo(
                 THashMap<TActorId, size_t> actorIds,
-                TVector<std::optional<TResponseRecordType>> responses)
-            : ActorIds(std::move(actorIds))
+                TVector<TResponseRecordType> responses)
+            : ActorId2Index(std::move(actorIds))
             , Responses(std::move(responses))
+            , ReceivedResponseFromActor(ActorId2Index.size(), false)
         {}
 
         bool ReceivedResponseFrom(const TActorId& id)
         {
-            auto it = ActorIds.find(id);
-            if (it == ActorIds.end()) {
+            auto it = ActorId2Index.find(id);
+            if (it == ActorId2Index.end()) {
                 return false;
             }
 
-            return Responses[it->second];
+            return ReceivedResponseFromActor[it->second];
         }
 
-        std::optional<TResponseRecordType>* GetResponseFrom(const TActorId& id)
+        TResponseRecordType* GetResponseFrom(const TActorId& id)
         {
-            auto it = ActorIds.find(id);
-            if (it == ActorIds.end()) {
+            auto it = ActorId2Index.find(id);
+            if (it == ActorId2Index.end() ||
+                !ReceivedResponseFromActor[it->second])
+            {
                 return nullptr;
             }
 
             return &Responses[it->second];
+        }
+
+        void SetResponseFrom(const TActorId& id, TResponseRecordType response)
+        {
+            auto it = ActorId2Index.find(id);
+            if (it == ActorId2Index.end()) {
+                return;
+            }
+
+            Responses[it->second] = std::move(response);
+            ReceivedResponseFromActor[it->second] = true;
+        }
+
+        static TVector<TResponseRecordType> ExtractResponses(
+            TChildActorsInfo childActorsInfo)
+        {
+            return std::move(childActorsInfo.Responses);
         }
     };
 
 private:
     const TRequestInfoPtr RequestInfo;
     NSplitRequest::TSplittedRequest<TMethod> Requests;
-    const TBlockRange64 OriginalRange;
     const TString DiskId;
     const NActors::TActorId ParentActorId;
     const ui64 RequestIdentityKey;
@@ -464,7 +486,6 @@ public:
     TSplittedRequestActor(
         TRequestInfoPtr requestInfo,
         NSplitRequest::TSplittedRequest<TMethod> requests,
-        const TBlockRange64 originalRange,
         TString diskId,
         TActorId parentActorId,
         ui64 requestIdentityKey);
@@ -481,20 +502,8 @@ private:
 private:
     STFUNC(StateWork);
 
-    void HandleChecksumUndelivery(
-        const TEvNonreplPartitionPrivate::TEvChecksumBlocksRequest::TPtr& ev,
-        const TActorContext& ctx);
-
-    void HandleChecksumResponse(
-        const TEvNonreplPartitionPrivate::TEvChecksumBlocksResponse::TPtr& ev,
-        const TActorContext& ctx);
-
-    void HandleUndelivery(
-        const typename TMethod::TRequest::TPtr& ev,
-        const TActorContext& ctx);
-
-    void HandleResponse(
-        const typename TMethod::TResponse::TPtr& ev,
+    void HandleActorResponse(
+        const TMethod::TResponse::TPtr& ev,
         const TActorContext& ctx);
 
     void HandlePoisonPill(
@@ -508,13 +517,11 @@ template <typename TMethod>
 TSplittedRequestActor<TMethod>::TSplittedRequestActor(
         TRequestInfoPtr requestInfo,
         NSplitRequest::TSplittedRequest<TMethod> requests,
-        const TBlockRange64 originalRange,
         TString diskId,
         TActorId parentActorId,
         ui64 requestIdentityKey)
     : RequestInfo(std::move(requestInfo))
     , Requests(std::move(requests))
-    , OriginalRange(originalRange)
     , DiskId(std::move(diskId))
     , ParentActorId(parentActorId)
     , RequestIdentityKey(requestIdentityKey)
@@ -553,13 +560,23 @@ void TSplittedRequestActor<TMethod>::ReplyAndDie(
     const TActorContext& ctx,
     NProto::TError error)
 {
-    auto response = std::make_unique<typename TMethod::TResponse>(std::move(error));
+    auto constructResponse = [&]()
+    {
+        if (HasError(error)) {
+            return std::make_unique<typename TMethod::TResponse>(
+                std::move(error));
+        }
 
-    if (!HasError(response->GetError())) {
-        // Unify responses
-    }
+        auto allResponses =
+            TChildActorsInfo::ExtractResponses(std::move(ChildActors));
+        auto responseToReply =
+            NSplitRequest::UnifyResponses<TMethod>(allResponses);
 
-    NCloud::Reply(ctx, *RequestInfo, std::move(response));
+        return std::make_unique<typename TMethod::TResponse>(
+            std::move(responseToReply));
+    };
+
+    NCloud::Reply(ctx, *RequestInfo, constructResponse());
 
     TBase::Die(ctx);
 }
@@ -571,7 +588,7 @@ void TSplittedRequestActor<TMethod>::OnActorResponse(
 {
     auto* msg = ev->Get();
     if (HasError(msg->GetError())) {
-        for (const auto& [actorId, _]: ChildActors.ActorIds) {
+        for (const auto& [actorId, _]: ChildActors.ActorId2Index) {
             if (ChildActors.ReceivedResponseFrom(actorId)) {
                 continue;
             }
@@ -583,15 +600,47 @@ void TSplittedRequestActor<TMethod>::OnActorResponse(
         return;
     }
 
-    auto* responseFromActor = ChildActors.GetResponseFrom(ev->Sender);
-    Y_ABORT_UNLESS(responseFromActor);
-    Y_ABORT_UNLESS(!responseFromActor->has_value());
-
-    *responseFromActor = std::move(msg->Record);
+    ChildActors.SetResponseFrom(ev->Sender, std::move(msg->Record));
 
     if (--PendingRequests == 0) {
         ReplyAndDie(ctx, {});
     }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+template <typename TMethod>
+STFUNC(TSplittedRequestActor<TMethod>::StateWork)
+{
+    TRequestScope timer(*RequestInfo);
+
+    switch (ev->GetTypeRewrite()) {
+        HFunc(TEvents::TEvPoisonPill, HandlePoisonPill);
+
+        HFunc(TMethod::TResponse, HandleActorResponse);
+
+        default:
+            HandleUnexpectedEvent(ev, TBlockStoreComponents::PARTITION_WORKER);
+            break;
+    }
+}
+
+template <typename TMethod>
+void TSplittedRequestActor<TMethod>::HandleActorResponse(
+    const TMethod::TResponse::TPtr& ev,
+    const TActorContext& ctx)
+{
+    OnActorResponse(ev, ctx);
+}
+
+template <typename TMethod>
+void TSplittedRequestActor<TMethod>::HandlePoisonPill(
+    const TEvents::TEvPoisonPill::TPtr& ev,
+    const TActorContext& ctx)
+{
+    Y_UNUSED(ev);
+
+    ReplyAndDie(ctx, MakeTabletIsDeadError(E_REJECTED, __LOCATION__));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -682,13 +731,30 @@ void TMirrorPartitionActor::ReadBlocks(
         actorIdsForRequests.emplace_back(actorIdsOrError.ExtractResult());
     }
 
-    auto splittedRequests = NSplitRequest::SplitRequest<TMethod>(
+    auto splittedRequest = NSplitRequest::SplitRequest<TMethod>(
         record,
         blockRangeSplittedByDeviceBorders,
         actorIdsForRequests);
-    Y_ABORT_UNLESS(splittedRequests.has_value());
 
+    if (!splittedRequest) {
+        NCloud::Reply(
+            ctx,
+            *ev,
+            std::make_unique<typename TMethod::TResponse>(
+                MakeError(E_INVALID_STATE, "can't split request")));
+        return;
+    }
 
+    const auto requestIdentityKey = ev->Cookie;
+    RequestsInProgress.AddReadRequest(requestIdentityKey, blockRange);
+
+    NCloud::Register<TSplittedRequestActor<TMethod>>(
+        ctx,
+        std::move(requestInfo),
+        std::move(splittedRequest),
+        State.GetReplicaInfos()[0].Config->GetName(),
+        SelfId(),
+        requestIdentityKey);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
