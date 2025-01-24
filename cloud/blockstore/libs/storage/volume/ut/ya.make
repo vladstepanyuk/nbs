@@ -2,6 +2,8 @@ UNITTEST_FOR(cloud/blockstore/libs/storage/volume)
 
 INCLUDE(${ARCADIA_ROOT}/cloud/storage/core/tests/recipes/medium.inc)
 
+SPLIT_FACTOR(15)
+
 SRCS(
     volume_database_ut.cpp
     volume_state_ut.cpp
