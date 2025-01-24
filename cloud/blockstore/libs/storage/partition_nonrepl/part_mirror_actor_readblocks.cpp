@@ -1,6 +1,7 @@
 #include "part_mirror_actor.h"
 
 #include "mirror_request_actor.h"
+#include "part_mirror_split_requests_utils.h"
 
 #include <cloud/blockstore/libs/common/block_checksum.h>
 #include <cloud/blockstore/libs/storage/api/undelivered.h>
@@ -401,17 +402,55 @@ template <typename TMethod>
 class TSplittedRequestActor final
     : public TActorBootstrapped<TRequestActor<TMethod>>
 {
-public:
-    using TRecordType = TMethod::TRequest::ProtoRecordType;
+private:
+    using TRequestRecordType = TMethod::TRequest::ProtoRecordType;
+    using TResponseRecordType = TMethod::TResponse::ProtoRecordType;
 
+    struct TChildActorsInfo {
+        THashMap<TActorId, size_t> ActorIds;
+        TVector<std::optional<TResponseRecordType>> Responses;
+
+        TChildActorsInfo(
+                THashMap<TActorId, size_t> actorIds,
+                TVector<std::optional<TResponseRecordType>> responses)
+            : ActorIds(std::move(actorIds))
+            , Responses(std::move(responses))
+        {}
+
+        bool ReceivedResponseFrom(const TActorId& id)
+        {
+            auto it = ActorIds.find(id);
+            if (it == ActorIds.end()) {
+                return false;
+            }
+
+            return Responses[it->second];
+        }
+
+        std::optional<TResponseRecordType>& GetResponseFrom(const TActorId& id)
+        {
+            auto it = ActorIds.find(id);
+            if (it == ActorIds.end()) {
+                return std::nullopt;
+            }
+
+            return Responses[it->second];
+        }
+    };
 
 private:
     const TRequestInfoPtr RequestInfo;
-    const TVector<NSplitRequest::TRequestToPartitions<TMethod>> RequestsInfo;
+    NSplitRequest::TSplittedRequest<TMethod> Requests;
     const TBlockRange64 OriginalRange;
     const TString DiskId;
     const NActors::TActorId ParentActorId;
     const ui64 RequestIdentityKey;
+
+    ui32 PendingRequests = 0;
+
+
+
+    TChildActorsInfo ChildActors;
 
     using TResponseProto = typename TMethod::TResponse::ProtoRecordType;
     using TBase = TActorBootstrapped<TRequestActor<TMethod>>;
@@ -424,10 +463,8 @@ private:
 public:
     TSplittedRequestActor(
         TRequestInfoPtr requestInfo,
-        const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-        const TVector<TVector<TActorId>>& partitions,
-        TRecordType originalRequest,
-        const TBlockRange64 range,
+        NSplitRequest::TSplittedRequest<TMethod> requests,
+        const TBlockRange64 originalRange,
         TString diskId,
         TActorId parentActorId,
         ui64 requestIdentityKey);
@@ -435,10 +472,11 @@ public:
     void Bootstrap(const TActorContext& ctx);
 
 private:
-    void SendRequests(const TActorContext& ctx);
-    bool HandleError(const TActorContext& ctx, NProto::TError error);
-    void CompareChecksums(const TActorContext& ctx);
     void Done(const TActorContext& ctx);
+
+    void OnActorResponse(
+        const TMethod::TResponse::TPtr& ev,
+        const TActorContext& ctx);
 
 private:
     STFUNC(StateWork);
@@ -466,6 +504,57 @@ private:
 
 ////////////////////////////////////////////////////////////////////////////////
 
+template <typename TMethod>
+TSplittedRequestActor<TMethod>::TSplittedRequestActor(
+        TRequestInfoPtr requestInfo,
+        NSplitRequest::TSplittedRequest<TMethod> requests,
+        const TBlockRange64 originalRange,
+        TString diskId,
+        TActorId parentActorId,
+        ui64 requestIdentityKey)
+    : RequestInfo(std::move(requestInfo))
+    , Requests(std::move(requests))
+    , OriginalRange(originalRange)
+    , DiskId(std::move(diskId))
+    , ParentActorId(parentActorId)
+    , RequestIdentityKey(requestIdentityKey)
+{}
+
+template <typename TMethod>
+void TSplittedRequestActor<TMethod>::Bootstrap(const TActorContext& ctx)
+{
+    THashMap<TActorId, size_t> actorIds;
+    actorIds.reserve(Requests.size());
+    TVector<std::optional<TResponseRecordType>> responses;
+    responses.reserve(Requests.size());
+    for (auto& [request, partitions, blockSubRange]: Requests) {
+        auto actorId = NCloud::Register<TRequestActor<TMethod>>(
+            ctx,
+            RequestInfo,
+            std::move(partitions),
+            std::move(request),
+            blockSubRange,
+            DiskId,
+            ctx.SelfID,
+            RequestIdentityKey,
+            true   // sendResponseToParent
+        );
+        ++PendingRequests;
+        actorIds[actorId] = responses.size();
+        responses.push_back(std::nullopt);
+    }
+
+    ChildActors = TChildActorsInfo(std::move(actorIds), std::move(responses));
+    TBase::Become(&TBase::TThis::StateWork);
+}
+
+template <typename TMethod>
+void TSplittedRequestActor<TMethod>::OnActorResponse(
+    const TMethod::TResponse::TPtr& ev,
+    const TActorContext& ctx)
+{
+
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -532,14 +621,16 @@ void TMirrorPartitionActor::ReadBlocks(
             blockRange,
             State.GetReplicaInfos()[0].Config->GetName(),
             SelfId(),
-            requestIdentityKey);
+            requestIdentityKey,
+            false   // sendResponseToParent
+        );
 
         return;
     }
 
-    auto splittedRequest = State.SplitRangeByDeviceBorders(blockRange);
-    TVector<TSet<TActorId>> actorIdsForRequests;
-    for (auto [_, blockSubRange]: splittedRequest) {
+    auto blockRangeSplittedByDeviceBorders = State.SplitRangeByDeviceBorders(blockRange);
+    TVector<THashSet<TActorId>> actorIdsForRequests;
+    for (auto blockSubRange: blockRangeSplittedByDeviceBorders) {
         auto actorIdsOrError = GetActorsForBlockRange(blockSubRange);
         if (actorIdsOrError.HasError()) {
             NCloud::Reply(
@@ -553,7 +644,12 @@ void TMirrorPartitionActor::ReadBlocks(
         actorIdsForRequests.emplace_back(actorIdsOrError.ExtractResult());
     }
 
-    ///
+    auto splittedRequests = NSplitRequest::SplitRequest<TMethod>(
+        record,
+        blockRangeSplittedByDeviceBorders,
+        actorIdsForRequests);
+    Y_ABORT_UNLESS(splittedRequests.has_value());
+
 
 }
 

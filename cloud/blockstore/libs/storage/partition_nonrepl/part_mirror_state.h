@@ -77,7 +77,7 @@ public:
 
     ui64 GetBlockCount() const;
 
-    TVector<TNonreplicatedPartitionConfig::TRangeToDevice> SplitRangeByDeviceBorders(
+    TVector<TBlockRange64> SplitRangeByDeviceBorders(
         const TBlockRange64 readRange);
 };
 
