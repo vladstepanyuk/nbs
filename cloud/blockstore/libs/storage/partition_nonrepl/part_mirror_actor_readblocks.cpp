@@ -427,14 +427,14 @@ private:
             return Responses[it->second];
         }
 
-        std::optional<TResponseRecordType>& GetResponseFrom(const TActorId& id)
+        std::optional<TResponseRecordType>* GetResponseFrom(const TActorId& id)
         {
             auto it = ActorIds.find(id);
             if (it == ActorIds.end()) {
-                return std::nullopt;
+                return nullptr;
             }
 
-            return Responses[it->second];
+            return &Responses[it->second];
         }
     };
 
@@ -472,7 +472,7 @@ public:
     void Bootstrap(const TActorContext& ctx);
 
 private:
-    void Done(const TActorContext& ctx);
+    void ReplyAndDie(const TActorContext& ctx, NProto::TError error);
 
     void OnActorResponse(
         const TMethod::TResponse::TPtr& ev,
@@ -549,11 +549,49 @@ void TSplittedRequestActor<TMethod>::Bootstrap(const TActorContext& ctx)
 }
 
 template <typename TMethod>
+void TSplittedRequestActor<TMethod>::ReplyAndDie(
+    const TActorContext& ctx,
+    NProto::TError error)
+{
+    auto response = std::make_unique<typename TMethod::TResponse>(std::move(error));
+
+    if (!HasError(response->GetError())) {
+        // Unify responses
+    }
+
+    NCloud::Reply(ctx, *RequestInfo, std::move(response));
+
+    TBase::Die(ctx);
+}
+
+template <typename TMethod>
 void TSplittedRequestActor<TMethod>::OnActorResponse(
     const TMethod::TResponse::TPtr& ev,
     const TActorContext& ctx)
 {
+    auto* msg = ev->Get();
+    if (HasError(msg->GetError())) {
+        for (const auto& [actorId, _]: ChildActors.ActorIds) {
+            if (ChildActors.ReceivedResponseFrom(actorId)) {
+                continue;
+            }
 
+            NCloud::Send(ctx, actorId, new TEvents::TEvPoisonPill());
+        }
+
+        ReplyAndDie(ctx, std::move(msg->GetError()));
+        return;
+    }
+
+    auto* responseFromActor = ChildActors.GetResponseFrom(ev->Sender);
+    Y_ABORT_UNLESS(responseFromActor);
+    Y_ABORT_UNLESS(!responseFromActor->has_value());
+
+    *responseFromActor = std::move(msg->Record);
+
+    if (--PendingRequests == 0) {
+        ReplyAndDie(ctx, {});
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
