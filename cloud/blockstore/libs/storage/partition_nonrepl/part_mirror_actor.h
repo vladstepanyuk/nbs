@@ -118,7 +118,8 @@ private:
         ui64 scrubbingRangeId);
     void StartResyncRange(const NActors::TActorContext& ctx);
 
-    TResultOrError<TSet<NActors::TActorId>> GetActorsForBlockRange(const TBlockRange64 blockRange);
+    TResultOrError<THashSet<NActors::TActorId>> GetPartitionsToReadBlockRange(
+        const TBlockRange64 blockRange);
 
 private:
     STFUNC(StateWork);

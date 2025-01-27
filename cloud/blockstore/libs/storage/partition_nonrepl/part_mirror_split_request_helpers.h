@@ -40,12 +40,13 @@ template <typename TMethod>
 std::optional<TSplittedRequest<TMethod>> SplitRequest(
     const TRequestRecordType<TMethod>& originalRequest,
     const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    const TVector<THashSet<TActorId>> partitionsPerDevice)
+    TVector<THashSet<TActorId>> partitionsPerDevice)
 {
     Y_UNUSED(originalRequest);
     Y_UNUSED(blockRangeSplittedByDeviceBorders);
     Y_UNUSED(partitionsPerDevice);
-    static_assert(false, "Not supported method");
+    return {};
+    // static_assert(false, "Not supported method");
 }
 
 template <>
@@ -61,21 +62,38 @@ SplitRequest(
     const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
     TVector<THashSet<TActorId>> partitionsPerDevice);
 
+template <typename TMethod>
+struct TUnifyResponsesContext
+{
+    TResponseRecordType<TMethod> Response;
+    size_t BlocksCountRequested;
+};
+
 NProto::TReadBlocksResponse UnifyResponsesRead(
-    const TVector<NProto::TReadBlocksResponse>& responsesToUnify);
+    const TVector<TUnifyResponsesContext<TEvService::TReadBlocksMethod>>&
+        responsesToUnify,
+    bool fillZeroResponses,
+    size_t blockSize);
 
 template <typename TMethod>
 TResponseRecordType<TMethod> UnifyResponses(
-    const TVector<TResponseRecordType<TMethod>>& responsesToUnify)
+    const TVector<TUnifyResponsesContext<TMethod>>& responsesToUnify,
+    size_t blockSize)
 {
-    if constexpr (
-        std::is_same_v<TMethod, TEvService::TReadBlocksMethod> ||
-        std::is_same_v<TMethod, TEvService::TReadBlocksLocalMethod>)
+    if constexpr (std::is_same_v<TMethod, TEvService::TReadBlocksMethod>) {
+        return UnifyResponsesRead(
+            std::move(responsesToUnify),
+            true,   // fillZeroResponses
+            blockSize);
+    } else if constexpr (std::is_same_v<TMethod, TEvService::TReadBlocksMethod>)
     {
-        UnifyResponsesRead(std::move(responsesToUnify));
+        return UnifyResponsesRead(
+            std::move(responsesToUnify),
+            false,   // fillZeroResponses
+            blockSize);
     } else {
-        static_assert(false, "Not supported method");
+        return {};
     }
 }
 
-}   // namespace NSplitRequest
+}   // namespace NCloud::NBlockStore::NStorage::NSplitRequest

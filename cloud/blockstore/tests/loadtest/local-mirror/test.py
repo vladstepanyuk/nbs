@@ -81,6 +81,12 @@ TESTS = [
         agent_count=3,
         dump_block_digests=True,
     ),
+    TestCase(
+        "mirror2-split-read",
+        "cloud/blockstore/tests/loadtest/local-mirror/local-mirror2-split-read.txt",
+        agent_count=4,
+        dump_block_digests=True,
+    ),
 ]
 
 
