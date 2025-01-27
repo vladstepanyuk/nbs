@@ -275,27 +275,6 @@ void TMirrorPartitionActor::StartResyncRange(
         BlockDigestGenerator);
 }
 
-TResultOrError<TSet<NActors::TActorId>>
-TMirrorPartitionActor::GetActorsForBlockRange(const TBlockRange64 blockRange)
-{
-    TSet<TActorId> replicaActorIds;
-    const ui32 readReplicaCount = Min<ui32>(
-        Max<ui32>(1, Config->GetMirrorReadReplicaCount()),
-        State.GetReplicaInfos().size());
-    for (ui32 i = 0; i < readReplicaCount; ++i) {
-        TActorId replicaActorId;
-        const auto error = State.NextReadReplica(blockRange, &replicaActorId);
-        if (HasError(error)) {
-            return error;
-        }
-
-        if (!replicaActorIds.insert(replicaActorId).second) {
-            break;
-        }
-    }
-    return replicaActorIds;
-}
-
 void TMirrorPartitionActor::ReplyAndDie(const TActorContext& ctx)
 {
     NCloud::Reply(ctx, *Poisoner, std::make_unique<TEvents::TEvPoisonTaken>());

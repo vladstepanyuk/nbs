@@ -1,5 +1,6 @@
-#include "part_mirror_split_requests_utils.h"
+#include "part_mirror_split_request_helpers.h"
 
+#include <ranges>
 
 namespace NCloud::NBlockStore::NStorage::NSplitRequest {
 
@@ -32,6 +33,19 @@ NSplitRequest::TSplittedRequest<TMethod> SplitRequestGeneralRead(
     return result;
 }
 
+TStringBuf ConvertBitMapToStringBuf(const TDynBitMap& bitmap)
+{
+    auto size = bitmap.Size() / 8;
+    Y_ABORT_UNLESS(bitmap.GetChunkCount() * sizeof(TDynBitMap::TChunk) == size);
+    return {reinterpret_cast<const char*>(bitmap.GetChunks()), size};
+}
+
+void ZeroLastNBits(TDynBitMap& bitmap, size_t n)
+{
+    auto start = n > bitmap.Size() ? 0 : bitmap.Size() - n;
+    bitmap.Reset(start, bitmap.Size());
+}
+
 }   // namespace
 
 template <>
@@ -42,13 +56,15 @@ std::optional<TSplittedRequest<TEvService::TReadBlocksMethod>> SplitRequest(
 {
     return SplitRequestGeneralRead<TEvService::TReadBlocksMethod>(
         originalRequest,
-        blockRangeSplittedByDeviceBorders, std::move(partitionsPerDevice));
+        blockRangeSplittedByDeviceBorders,
+        std::move(partitionsPerDevice));
 }
 
 template <>
 std::optional<TSplittedRequest<TEvService::TReadBlocksLocalMethod>>
 SplitRequest(
-    const TRequestRecordType<TEvService::TReadBlocksLocalMethod>& originalRequest,
+    const TRequestRecordType<TEvService::TReadBlocksLocalMethod>&
+        originalRequest,
     const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
     TVector<THashSet<TActorId>> partitionsPerDevice)
 {
@@ -78,11 +94,15 @@ SplitRequest(
         size_t size = 0;
 
         while (rangeSizeLeft > 0) {
-            if (sglistIdx < originalSglist.size()) {
+            if (sglistIdx >= originalSglist.size()) {
                 return std::nullopt;
             }
 
             const auto& sglistElement = originalSglist[sglistIdx];
+            if (sglistElement.Size() % originalRequest.BlockSize != 0) {
+                return std::nullopt;
+            }
+
             if (sglistElement.Size() == sglistElementUsedData) {
                 if (size) {
                     newSglist.emplace_back(start, size);
@@ -103,8 +123,8 @@ SplitRequest(
             auto nextSglistElementUsedData =
                 Min(sglistElement.Size(),
                     sglistElementUsedData + rangeSizeLeft);
-            rangeSizeLeft -=
-                (nextSglistElementUsedData - sglistElementUsedData);
+            size = nextSglistElementUsedData - sglistElementUsedData;
+            rangeSizeLeft -= size;
             sglistElementUsedData = nextSglistElementUsedData;
         }
 
@@ -126,26 +146,81 @@ SplitRequest(
 }
 
 NProto::TReadBlocksResponse UnifyResponsesRead(
-    const TVector<NProto::TReadBlocksResponse>& responsesToUnify)
+    const TVector<TUnifyResponsesContext<TEvService::TReadBlocksMethod>>&
+        responsesToUnify,
+    bool fillZeroResponses,
+    size_t blockSize)
 {
     NProto::TReadBlocksResponse result;
-    bool allZeros = true;
-    ui64 throttlerDelayMax = 0;
-    for (const auto& response: responsesToUnify) {
-        auto blocks = response.GetBlocks();
-        for (auto buffer: blocks.GetBuffers()) {
-            result.MutableBlocks()->AddBuffers(std::move(buffer));
-        }
-        result.MutableUnencryptedBlockMask()->AppendAscii(
-            response.GetUnencryptedBlockMask());
 
+    const auto* errorResponse = FindIfPtr(
+        responsesToUnify,
+        [&](const auto& el) { return HasError(el.Response.GetError()); });
+
+    if (errorResponse) {
+        result.MutableError()->CopyFrom(errorResponse->Response.GetError());
+
+        return result;
+    }
+
+    result.MutableUnencryptedBlockMask()->append("\0");
+    size_t overallSize = 0;
+    for (const auto& [_, blocksRequested]: responsesToUnify) {
+        overallSize += blocksRequested;
+    }
+
+    TDynBitMap map;
+    map.Reserve(overallSize);
+    map.Clear();
+
+    TDynBitMap tmpMap;
+
+    for (const auto& responseCtx: responsesToUnify | std::views::reverse) {
+        map.LShift(responseCtx.BlocksCountRequested);
+
+        tmpMap.Reserve(responseCtx.BlocksCountRequested);
+        tmpMap.Clear();
+        auto* dst = const_cast<TDynBitMap::TChunk*>(tmpMap.GetChunks());
+        const auto& bitBufferToAdd =
+            responseCtx.Response.GetUnencryptedBlockMask();
+        memcpy(
+            dst,
+            bitBufferToAdd.Data(),
+            Min(bitBufferToAdd.Size(),
+                tmpMap.GetChunkCount() * sizeof(TDynBitMap::TChunk)));
+        ZeroLastNBits(tmpMap, tmpMap.Size() - responseCtx.BlocksCountRequested);
+
+        map.Or(tmpMap);
+    }
+    result.MutableUnencryptedBlockMask()->assign(ConvertBitMapToStringBuf(map));
+
+    ui64 throttlerDelayMax = 0;
+    bool allZeros = true;
+    bool allBlocksEmpty = true;
+    for (const auto& [response, blocksCountRequested]: responsesToUnify) {
+        allZeros &= response.GetAllZeroes();
+        allBlocksEmpty &= response.GetBlocks().BuffersSize() == 0;
         throttlerDelayMax =
             Max(throttlerDelayMax, response.GetThrottlerDelay());
-        allZeros &= response.GetAllZeroes();
     }
 
     result.SetThrottlerDelay(throttlerDelayMax);
     result.SetAllZeroes(allZeros);
+
+    for (const auto& [response, blocksCountRequested]: responsesToUnify) {
+        auto blocks = response.GetBlocks();
+
+        if (!(allBlocksEmpty) && blocks.BuffersSize() == 0 && fillZeroResponses)
+        {
+            for (size_t i = 0; i < blocksCountRequested; ++i) {
+                result.MutableBlocks()->AddBuffers(TString(blockSize, '\0'));
+            }
+        } else {
+            for (auto buffer: blocks.GetBuffers()) {
+                result.MutableBlocks()->AddBuffers(std::move(buffer));
+            }
+        }
+    }
 
     return result;
 }
