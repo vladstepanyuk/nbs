@@ -92,9 +92,6 @@ SplitRequest(
         auto rangeSizeLeft = blockRangeSplittedByDeviceBorders[i].Size() *
                              originalRequest.BlockSize;
 
-        const char* start = nullptr;
-        size_t size = 0;
-
         while (rangeSizeLeft > 0) {
             if (sglistIdx >= originalSglist.size()) {
                 return std::nullopt;
@@ -106,32 +103,24 @@ SplitRequest(
             }
 
             if (sglistElement.Size() == sglistElementUsedData) {
-                if (size) {
-                    newSglist.emplace_back(start, size);
-                }
-                start = nullptr;
-                size = 0;
-
                 ++sglistIdx;
                 sglistElementUsedData = 0;
-
                 continue;
-            }
-
-            if (!start) {
-                start = sglistElement.Data() + sglistElementUsedData;
             }
 
             auto nextSglistElementUsedData =
                 Min(sglistElement.Size(),
                     sglistElementUsedData + rangeSizeLeft);
-            size = nextSglistElementUsedData - sglistElementUsedData;
+            const auto size = nextSglistElementUsedData - sglistElementUsedData;
             rangeSizeLeft -= size;
-            sglistElementUsedData = nextSglistElementUsedData;
-        }
 
-        if (size) {
-            newSglist.emplace_back(start, size);
+            const auto* start = sglistElement.Data() + sglistElementUsedData;
+
+            if (size) {
+                newSglist.emplace_back(start, size);
+            }
+
+            sglistElementUsedData = nextSglistElementUsedData;
         }
 
         result[i].Request.Sglist =
