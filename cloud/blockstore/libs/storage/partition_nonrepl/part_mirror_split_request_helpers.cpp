@@ -4,6 +4,8 @@
 
 namespace NCloud::NBlockStore::NStorage::NSplitRequest {
 
+using namespace NActors;
+
 ////////////////////////////////////////////////////////////////////////////////
 
 namespace {
