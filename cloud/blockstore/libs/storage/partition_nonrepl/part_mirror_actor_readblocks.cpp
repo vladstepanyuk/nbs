@@ -576,7 +576,7 @@ void TSplittedRequestActor<TMethod>::ReplyAndDie(
 {
     auto response =
         std::make_unique<typename TMethod::TResponse>(std::move(error));
-    if (!HasError(response)) {
+    if (!HasError(response->GetError())) {
         auto allResponses =
             TChildActorsInfo::ExtractResponses(std::move(ChildActors));
         response->Record = UnifyResponses<TMethod>(allResponses, BlockSize);
