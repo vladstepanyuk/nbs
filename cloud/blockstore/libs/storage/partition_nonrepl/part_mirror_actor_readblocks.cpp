@@ -553,7 +553,7 @@ void TSplittedRequestActor<TMethod>::Bootstrap(const TActorContext& ctx)
             ctx,
             RequestInfo,
             std::move(partitions),
-            request,
+            std::move(request),
             blockSubRange,
             DiskId,
             ctx.SelfID,
@@ -574,24 +574,15 @@ void TSplittedRequestActor<TMethod>::ReplyAndDie(
     const TActorContext& ctx,
     NProto::TError error)
 {
-    auto constructResponse = [&]()
-    {
-        if (HasError(error)) {
-            return std::make_unique<typename TMethod::TResponse>(
-                std::move(error));
-        }
-
+    auto response =
+        std::make_unique<typename TMethod::TResponse>(std::move(error));
+    if (!HasError(response)) {
         auto allResponses =
             TChildActorsInfo::ExtractResponses(std::move(ChildActors));
-        auto responseToReply =
-            UnifyResponses<TMethod>(allResponses, BlockSize);
+        response->Record = UnifyResponses<TMethod>(allResponses, BlockSize);
+    }
 
-        return std::make_unique<typename TMethod::TResponse>(
-            std::move(responseToReply));
-    };
-
-    NCloud::Reply(ctx, *RequestInfo, constructResponse());
-
+    NCloud::Reply(ctx, *RequestInfo, std::move(response));
     TBase::Die(ctx);
 }
 
@@ -784,6 +775,14 @@ void TMirrorPartitionActor::ReadBlocks(
 
     const auto requestIdentityKey = ev->Cookie;
     RequestsInProgress.AddReadRequest(requestIdentityKey, blockRange);
+
+    LOG_DEBUG(
+        ctx,
+        TBlockStoreComponents::PARTITION_WORKER,
+        "[%s] Split original range %s by device borders. Will try to read with "
+        "few requests",
+        DiskId.c_str(),
+        DescribeRange(blockRange).c_str());
 
     NCloud::Register<TSplittedRequestActor<TMethod>>(
         ctx,

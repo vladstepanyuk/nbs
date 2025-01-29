@@ -163,7 +163,6 @@ NProto::TReadBlocksResponse UnifyResponsesRead(
         return result;
     }
 
-    result.MutableUnencryptedBlockMask()->append("\0");
     size_t overallSize = 0;
     for (const auto& [_, blocksRequested]: responsesToUnify) {
         overallSize += blocksRequested;
@@ -207,11 +206,13 @@ NProto::TReadBlocksResponse UnifyResponsesRead(
     result.SetThrottlerDelay(throttlerDelayMax);
     result.SetAllZeroes(allZeros);
 
+    if (allBlocksEmpty) {
+        return result;
+    }
     for (const auto& [response, blocksCountRequested]: responsesToUnify) {
         auto blocks = response.GetBlocks();
 
-        if (!(allBlocksEmpty) && blocks.BuffersSize() == 0 && fillZeroResponses)
-        {
+        if (blocks.BuffersSize() == 0 && fillZeroResponses) {
             for (size_t i = 0; i < blocksCountRequested; ++i) {
                 result.MutableBlocks()->AddBuffers(TString(blockSize, '\0'));
             }

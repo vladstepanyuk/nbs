@@ -4,7 +4,7 @@
 #include <cloud/blockstore/libs/common/block_range.h>
 #include <cloud/blockstore/libs/storage/api/service.h>
 
-#include <contrib/ydb/library/actors/interconnect/types.h>
+#include <contrib/ydb/library/actors/core/actorid.h>
 
 namespace NCloud::NBlockStore::NStorage::NSplitRequest {
 
@@ -20,12 +20,12 @@ template <typename TMethod>
 struct TRequestToPartitions
 {
     TRequestRecordType<TMethod> Request;
-    TVector<TActorId> Partitions;
+    TVector<NActors::TActorId> Partitions;
     TBlockRange64 BlockRangeForRequest;
 
     TRequestToPartitions(
             TRequestRecordType<TMethod> request,
-            TVector<TActorId> partitions,
+            TVector<NActors::TActorId> partitions,
             TBlockRange64 blockRangeForRequest)
         : Request(std::move(request))
         , Partitions(std::move(partitions))
@@ -40,27 +40,26 @@ template <typename TMethod>
 std::optional<TSplittedRequest<TMethod>> SplitRequest(
     const TRequestRecordType<TMethod>& originalRequest,
     const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    TVector<THashSet<TActorId>> partitionsPerDevice)
+    TVector<THashSet<NActors::TActorId>> partitionsPerDevice)
 {
     Y_UNUSED(originalRequest);
     Y_UNUSED(blockRangeSplittedByDeviceBorders);
     Y_UNUSED(partitionsPerDevice);
     return {};
-    // static_assert(false, "Not supported method");
 }
 
 template <>
 std::optional<TSplittedRequest<TEvService::TReadBlocksMethod>> SplitRequest(
     const NProto::TReadBlocksRequest& originalRequest,
     const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    TVector<THashSet<TActorId>> partitionsPerDevice);
+    TVector<THashSet<NActors::TActorId>> partitionsPerDevice);
 
 template <>
 std::optional<TSplittedRequest<TEvService::TReadBlocksLocalMethod>>
 SplitRequest(
     const NProto::TReadBlocksLocalRequest& originalRequest,
     const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    TVector<THashSet<TActorId>> partitionsPerDevice);
+    TVector<THashSet<NActors::TActorId>> partitionsPerDevice);
 
 template <typename TMethod>
 struct TUnifyResponsesContext

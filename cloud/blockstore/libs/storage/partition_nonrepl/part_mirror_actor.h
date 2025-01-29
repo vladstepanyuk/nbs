@@ -4,7 +4,6 @@
 
 #include "checksum_range.h"
 #include "config.h"
-#include "contrib/ydb/library/actors/interconnect/types.h"
 #include "part_mirror_state.h"
 #include "part_nonrepl_events_private.h"
 
