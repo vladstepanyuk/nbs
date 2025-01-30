@@ -787,10 +787,6 @@ Y_UNIT_TEST_SUITE(TMirrorPartitionTest)
     void DoShouldTryToSplitReadRequest(const THashSet<TString>& freshDeviceIds)
     {
         using namespace std::chrono_literals;
-        Cerr << "Executing test with freshDeviceIds:" << Endl;
-        for (auto id: freshDeviceIds) {
-            Cerr << id << Endl;
-        }
         TTestRuntime runtime;
 
         TTestEnv env(
