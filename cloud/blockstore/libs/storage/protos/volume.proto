@@ -673,3 +673,27 @@ message TGracefulShutdownResponse
     // Request traces.
     NCloud.NProto.TTraceInfo Trace = 2;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// DumpChannelsGroups request/response.
+
+message TDumpChannelsGroupsRequest
+{
+    // Optional request headers.
+    THeaders Headers = 1;
+
+    // Label of volume to shutdown.
+    string DiskId = 2;
+}
+
+message TDumpChannelsGroupsResponse
+{
+    // Optional error, set only if error happened.
+    NCloud.NProto.TError Error = 1;
+
+    // Request traces.
+    NCloud.NProto.TTraceInfo Trace = 2;
+
+    // Ids of groups of this volume channels/
+    repeated uint32 GroupIds = 3;
+}

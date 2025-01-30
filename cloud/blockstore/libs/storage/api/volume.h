@@ -36,6 +36,7 @@ namespace NCloud::NBlockStore::NStorage {
     xxx(ChangeStorageConfig,      __VA_ARGS__)                                 \
     xxx(GetStorageConfig,         __VA_ARGS__)                                 \
     xxx(GracefulShutdown,         __VA_ARGS__)                                 \
+    xxx(DumpChannelsGroups,        __VA_ARGS__)                                 \
 
 // BLOCKSTORE_VOLUME_REQUESTS
 
@@ -334,6 +335,9 @@ struct TEvVolume
 
         EvGracefulShutdownRequest = EvBegin + 60,
         EvGracefulShutdownResponse = EvBegin + 61,
+
+        EvDumpChannelsGroupsRequest = EvBegin + 62,
+        EvDumpChannelsGroupsResponse = EvBegin + 63,
 
         EvEnd
     };

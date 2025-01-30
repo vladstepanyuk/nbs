@@ -63,6 +63,7 @@ SRCS(
     service_actor_describe_disk_registry_config.cpp
     service_actor_describe_model.cpp
     service_actor_destroy.cpp
+    service_actor_dump_volume_channel_groups.cpp
     service_actor_forward.cpp
     service_actor_forward_to_disk_registry.cpp
     service_actor_list.cpp
