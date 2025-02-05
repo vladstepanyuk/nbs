@@ -148,7 +148,7 @@ public:
             .LogComponent = TBlockStoreComponents::HIVE_PROXY,
             .TabletBootInfoBackupFilePath =
                 Args.TemporaryServer
-                    ? ""
+                    ? TString()
                     : Args.StorageConfig->GetTabletBootInfoBackupFilePath(),
             .FallbackMode = Args.StorageConfig->GetHiveProxyFallbackMode(),
             .TenantHiveTabletId = Args.StorageConfig->GetTenantHiveTabletId(),
