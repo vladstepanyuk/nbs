@@ -139,11 +139,17 @@ public:
         //
 
         auto hiveProxy = CreateHiveProxy({
-            .PipeClientRetryCount = Args.StorageConfig->GetPipeClientRetryCount(),
-            .PipeClientMinRetryTime = Args.StorageConfig->GetPipeClientMinRetryTime(),
-            .HiveLockExpireTimeout = Args.StorageConfig->GetHiveLockExpireTimeout(),
+            .PipeClientRetryCount =
+                Args.StorageConfig->GetPipeClientRetryCount(),
+            .PipeClientMinRetryTime =
+                Args.StorageConfig->GetPipeClientMinRetryTime(),
+            .HiveLockExpireTimeout =
+                Args.StorageConfig->GetHiveLockExpireTimeout(),
             .LogComponent = TBlockStoreComponents::HIVE_PROXY,
-            .TabletBootInfoBackupFilePath = Args.StorageConfig->GetTabletBootInfoBackupFilePath(),
+            .TabletBootInfoBackupFilePath =
+                Args.TemporaryServer
+                    ? ""
+                    : Args.StorageConfig->GetTabletBootInfoBackupFilePath(),
             .FallbackMode = Args.StorageConfig->GetHiveProxyFallbackMode(),
             .TenantHiveTabletId = Args.StorageConfig->GetTenantHiveTabletId(),
         });
