@@ -15,8 +15,8 @@ namespace {
 template <typename TMethod>
 NSplitRequest::TSplittedRequest<TMethod> SplitRequestGeneralRead(
     const TRequestRecordType<TMethod>& originalRequest,
-    const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    TVector<TVector<TActorId>> partitionsPerDevice)
+    TArrayRef<const TBlockRange64> blockRangeSplittedByDeviceBorders,
+    TArrayRef<TVector<TActorId>> partitionsPerDevice)
 {
     NSplitRequest::TSplittedRequest<TMethod> result;
     result.reserve(blockRangeSplittedByDeviceBorders.size());
@@ -39,25 +39,25 @@ NSplitRequest::TSplittedRequest<TMethod> SplitRequestGeneralRead(
 
 TSplittedRequest<TEvService::TReadBlocksMethod> SplitRequestRead(
     const NProto::TReadBlocksRequest& originalRequest,
-    const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    TVector<TVector<NActors::TActorId>> partitionsPerDevice)
+    TArrayRef<const TBlockRange64> blockRangeSplittedByDeviceBorders,
+    TArrayRef<TVector<NActors::TActorId>> partitionsPerDevice)
 {
     return SplitRequestGeneralRead<TEvService::TReadBlocksMethod>(
         originalRequest,
         blockRangeSplittedByDeviceBorders,
-        std::move(partitionsPerDevice));
+        partitionsPerDevice);
 }
 
 std::optional<TSplittedRequest<TEvService::TReadBlocksLocalMethod>>
 SplitRequestReadLocal(
     const NProto::TReadBlocksLocalRequest& originalRequest,
-    const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    TVector<TVector<NActors::TActorId>> partitionsPerDevice)
+    TArrayRef<const TBlockRange64> blockRangeSplittedByDeviceBorders,
+    TArrayRef<TVector<NActors::TActorId>> partitionsPerDevice)
 {
     auto result = SplitRequestGeneralRead<TEvService::TReadBlocksLocalMethod>(
         originalRequest,
         blockRangeSplittedByDeviceBorders,
-        std::move(partitionsPerDevice));
+        partitionsPerDevice);
 
     auto guard = originalRequest.Sglist.Acquire();
     if (!guard) {
@@ -95,7 +95,7 @@ SplitRequestReadLocal(
 }
 
 NProto::TReadBlocksResponse UnifyResponsesRead(
-    const TVector<TUnifyResponsesContext<TEvService::TReadBlocksMethod>>&
+    TArrayRef<const TUnifyResponsesContext<TEvService::TReadBlocksMethod>>
         responsesToUnify,
     bool fillZeroResponses,
     size_t blockSize)

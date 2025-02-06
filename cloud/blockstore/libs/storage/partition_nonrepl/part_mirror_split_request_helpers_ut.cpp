@@ -28,28 +28,6 @@ TSgList UnifySglist(const TSgList& sglist)
     return result;
 }
 
-TStringBuf ConvertBitMapToStringBuf(const TDynBitMap& bitmap)
-{
-    auto size = bitmap.Size() / 8;
-    Y_ABORT_UNLESS(bitmap.GetChunkCount() * sizeof(TDynBitMap::TChunk) == size);
-    return {reinterpret_cast<const char*>(bitmap.GetChunks()), size};
-}
-
-TDynBitMap GetBitMap(const TString& s)
-{
-    TDynBitMap mask;
-
-    if (s) {
-        mask.Reserve(s.size() * 8);
-        Y_ABORT_UNLESS(
-            mask.GetChunkCount() * sizeof(TDynBitMap::TChunk) == s.size());
-        auto* dst = const_cast<TDynBitMap::TChunk*>(mask.GetChunks());
-        memcpy(dst, s.data(), s.size());
-    }
-
-    return mask;
-}
-
 }   // namespace
 
 Y_UNIT_TEST_SUITE(TSplitRequestTest)
@@ -76,7 +54,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
             TBlockRange64::WithLength(12, 1),
         };
 
-        TVector<THashSet<TActorId>> actorsForEachRequests{
+        TVector<TVector<TActorId>> actorsForEachRequests{
             {MakeActorId(0), MakeActorId(1)},
             {MakeActorId(2), MakeActorId(3)},
             {MakeActorId(4), MakeActorId(5)},
@@ -106,7 +84,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
                 partSplitted.Partitions.size(),
                 actorsForEachRequests[i].size());
             for (const auto& actorId: partSplitted.Partitions) {
-                UNIT_ASSERT(actorsForEachRequests[i].contains(actorId));
+                UNIT_ASSERT(FindPtr(actorsForEachRequests[i], actorId));
             }
 
             UNIT_ASSERT_VALUES_EQUAL(
@@ -168,7 +146,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
             TBlockRange64::WithLength(12, 1),
         };
 
-        TVector<THashSet<TActorId>> actorsForEachRequests{
+        TVector<TVector<TActorId>> actorsForEachRequests{
             {MakeActorId(0), MakeActorId(1)},
             {MakeActorId(2), MakeActorId(3)},
             {MakeActorId(4), MakeActorId(5)},
@@ -199,7 +177,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
                 partSplitted.Partitions.size(),
                 actorsForEachRequests[i].size());
             for (const auto& actorId: partSplitted.Partitions) {
-                UNIT_ASSERT(actorsForEachRequests[i].contains(actorId));
+                UNIT_ASSERT(FindPtr(actorsForEachRequests[i], actorId));
             }
 
             UNIT_ASSERT_VALUES_EQUAL(
@@ -282,7 +260,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
             TBlockRange64::WithLength(0, 3),
         };
 
-        TVector<THashSet<TActorId>> actorsForEachRequests{
+        TVector<TVector<TActorId>> actorsForEachRequests{
             {MakeActorId(0), MakeActorId(1)},
         };
 
@@ -290,7 +268,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
             NSplitRequest::SplitRequest<TEvService::TReadBlocksLocalMethod>(
                 request,
                 blockRangeSplittedByDeviceBorders,
-                actorsForEachRequests);
+                std::move(actorsForEachRequests));
 
         UNIT_ASSERT(!maybeSplittedRequest.has_value());
     }
@@ -328,7 +306,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
             TBlockRange64::WithLength(0, 3),
         };
 
-        TVector<THashSet<TActorId>> actorsForEachRequests{
+        TVector<TVector<TActorId>> actorsForEachRequests{
             {MakeActorId(0), MakeActorId(1)},
         };
 
@@ -369,15 +347,13 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
                 map.Flip();
             }
 
-            response.MutableUnencryptedBlockMask()->assign(
-                ConvertBitMapToStringBuf(map));
-
             response.SetThrottlerDelay(blocksCount);
             response.SetAllZeroes(false);
             responses.push_back({std::move(response), blocksCount});
         }
 
-        auto unifiedResponse = UnifyResponses(responses, blockSize);
+        auto unifiedResponse =
+            UnifyResponses(MakeConstArrayRef(responses), blockSize);
         UNIT_ASSERT(!HasError(unifiedResponse.GetError()));
         UNIT_ASSERT_VALUES_EQUAL(
             unifiedResponse.GetThrottlerDelay(),
@@ -385,7 +361,6 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
         UNIT_ASSERT(!unifiedResponse.GetAllZeroes());
 
         size_t blocksReviewed = 0;
-        auto map = GetBitMap(unifiedResponse.GetUnencryptedBlockMask());
         for (size_t blocksCount = 1; blocksCount <= iterationsCount;
              ++blocksCount)
         {
@@ -395,9 +370,6 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
                 UNIT_ASSERT_VALUES_EQUAL(
                     block,
                     TString(blockSize, '0' + blocksCount));
-                UNIT_ASSERT_VALUES_EQUAL(
-                    map.Get(blocksReviewed),
-                    blocksCount % 2 == 1);
 
                 ++blocksReviewed;
             }
@@ -411,12 +383,10 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
         NProto::TReadBlocksResponse resp1;
         resp1.ClearBlocks();
         resp1.SetAllZeroes(true);
-        resp1.MutableUnencryptedBlockMask()->assign('\0');
 
         NProto::TReadBlocksResponse resp2;
         resp2.ClearBlocks();
         resp2.SetAllZeroes(false);
-        resp2.MutableUnencryptedBlockMask()->assign('\0');
         resp2.MutableBlocks()->AddBuffers(TString(blockSize, '1'));
 
         TVector<NSplitRequest::TUnifyResponsesContext<
@@ -426,7 +396,8 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
                 {.Response = resp2, .BlocksCountRequested = 1},
             };
 
-        auto unifiedResponse = UnifyResponses(responses, blockSize);
+        auto unifiedResponse =
+            UnifyResponses(MakeConstArrayRef(responses), blockSize);
 
         UNIT_ASSERT_VALUES_EQUAL(unifiedResponse.GetBlocks().BuffersSize(), 2);
         UNIT_ASSERT_VALUES_EQUAL(
@@ -444,12 +415,10 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
         NProto::TReadBlocksResponse resp1;
         resp1.ClearBlocks();
         resp1.SetAllZeroes(true);
-        resp1.MutableUnencryptedBlockMask()->assign('\0');
 
         NProto::TReadBlocksResponse resp2;
         resp2.ClearBlocks();
         resp2.SetAllZeroes(true);
-        resp2.MutableUnencryptedBlockMask()->assign('\0');
 
         TVector<NSplitRequest::TUnifyResponsesContext<
             TEvService::TReadBlocksMethod>>
@@ -458,11 +427,10 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
                 {.Response = resp2, .BlocksCountRequested = 1},
             };
 
-        auto unifiedResponse = UnifyResponses(responses, blockSize);
+        auto unifiedResponse =
+            UnifyResponses(MakeConstArrayRef(responses), blockSize);
 
-        UNIT_ASSERT_VALUES_EQUAL(
-            unifiedResponse.GetBlocks().BuffersSize(),
-            0);
+        UNIT_ASSERT_VALUES_EQUAL(unifiedResponse.GetBlocks().BuffersSize(), 0);
         UNIT_ASSERT(unifiedResponse.GetAllZeroes());
     }
 
@@ -476,7 +444,6 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
         NProto::TReadBlocksResponse resp2;
         resp2.ClearBlocks();
         resp2.SetAllZeroes(true);
-        resp2.MutableUnencryptedBlockMask()->assign('\0');
 
         TVector<NSplitRequest::TUnifyResponsesContext<
             TEvService::TReadBlocksMethod>>
@@ -485,7 +452,8 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
                 {.Response = resp2, .BlocksCountRequested = 1},
             };
 
-        auto unifiedResponse = UnifyResponses(responses, blockSize);
+        auto unifiedResponse =
+            UnifyResponses(MakeConstArrayRef(responses), blockSize);
 
         UNIT_ASSERT_VALUES_EQUAL(
             unifiedResponse.GetError().GetCode(),

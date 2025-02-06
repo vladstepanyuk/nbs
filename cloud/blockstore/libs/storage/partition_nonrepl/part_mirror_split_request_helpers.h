@@ -38,20 +38,20 @@ using TSplittedRequest = TVector<TRequestToPartitions<TMethod>>;
 
 TSplittedRequest<TEvService::TReadBlocksMethod> SplitRequestRead(
     const NProto::TReadBlocksRequest& originalRequest,
-    const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    TVector<TVector<NActors::TActorId>> partitionsPerDevice);
+    TArrayRef<const TBlockRange64> blockRangeSplittedByDeviceBorders,
+    TArrayRef<TVector<NActors::TActorId>> partitionsPerDevice);
 
 std::optional<TSplittedRequest<TEvService::TReadBlocksLocalMethod>>
 SplitRequestReadLocal(
     const NProto::TReadBlocksLocalRequest& originalRequest,
-    const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    TVector<TVector<NActors::TActorId>> partitionsPerDevice);
+    TArrayRef<const TBlockRange64> blockRangeSplittedByDeviceBorders,
+    TArrayRef<TVector<NActors::TActorId>> partitionsPerDevice);
 
 template <typename TMethod>
 std::optional<TSplittedRequest<TMethod>> SplitRequest(
     const TRequestRecordType<TMethod>& originalRequest,
-    const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    TVector<TVector<NActors::TActorId>> partitionsPerDevice)
+    TArrayRef<const TBlockRange64> blockRangeSplittedByDeviceBorders,
+    TArrayRef<TVector<NActors::TActorId>> partitionsPerDevice)
 {
     if constexpr (std::is_same_v<TMethod, TEvService::TReadBlocksMethod>) {
         return SplitRequestRead(
@@ -77,25 +77,25 @@ struct TUnifyResponsesContext
 };
 
 NProto::TReadBlocksResponse UnifyResponsesRead(
-    const TVector<TUnifyResponsesContext<TEvService::TReadBlocksMethod>>&
+    TArrayRef<const TUnifyResponsesContext<TEvService::TReadBlocksMethod>>
         responsesToUnify,
     bool fillZeroResponses,
     size_t blockSize);
 
 template <typename TMethod>
 TResponseRecordType<TMethod> UnifyResponses(
-    const TVector<TUnifyResponsesContext<TMethod>>& responsesToUnify,
+    TArrayRef<const TUnifyResponsesContext<TMethod>> responsesToUnify,
     size_t blockSize)
 {
     if constexpr (std::is_same_v<TMethod, TEvService::TReadBlocksMethod>) {
         return UnifyResponsesRead(
-            std::move(responsesToUnify),
+            responsesToUnify,
             true,   // fillZeroResponses
             blockSize);
     } else if constexpr (std::is_same_v<TMethod, TEvService::TReadBlocksMethod>)
     {
         return UnifyResponsesRead(
-            std::move(responsesToUnify),
+            responsesToUnify,
             false,   // fillZeroResponses
             blockSize);
     } else {
