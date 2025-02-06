@@ -734,7 +734,7 @@ void TMirrorPartitionActor::ReadBlocks(
         NCloud::Register<TRequestActor<TMethod>>(
             ctx,
             std::move(requestInfo),
-            TVector<TActorId>(replicaActorIds.begin(), replicaActorIds.end()),
+            std::move(replicaActorIds),
             std::move(record),
             blockRange,
             State.GetReplicaInfos()[0].Config->GetName(),
