@@ -205,7 +205,7 @@ NProto::TError TMirrorPartitionState::NextReadReplica(
 TVector<TBlockRange64> TMirrorPartitionState::SplitRangeByDeviceBorders(
     const TBlockRange64 readRange)
 {
-    return ReplicaInfos[0].Config->SplitBlockRangeByDevicesBorder(readRange);
+    return PartConfig->SplitBlockRangeByDevicesBorder(readRange);
 }
 
 ui32 TMirrorPartitionState::GetBlockSize() const

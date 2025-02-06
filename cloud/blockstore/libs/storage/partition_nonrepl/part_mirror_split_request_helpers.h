@@ -36,30 +36,38 @@ struct TRequestToPartitions
 template <typename TMethod>
 using TSplittedRequest = TVector<TRequestToPartitions<TMethod>>;
 
+TSplittedRequest<TEvService::TReadBlocksMethod> SplitRequestRead(
+    const NProto::TReadBlocksRequest& originalRequest,
+    const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
+    TVector<TVector<NActors::TActorId>> partitionsPerDevice);
+
+std::optional<TSplittedRequest<TEvService::TReadBlocksLocalMethod>>
+SplitRequestReadLocal(
+    const NProto::TReadBlocksLocalRequest& originalRequest,
+    const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
+    TVector<TVector<NActors::TActorId>> partitionsPerDevice);
+
 template <typename TMethod>
 std::optional<TSplittedRequest<TMethod>> SplitRequest(
     const TRequestRecordType<TMethod>& originalRequest,
     const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    TVector<THashSet<NActors::TActorId>> partitionsPerDevice)
+    TVector<TVector<NActors::TActorId>> partitionsPerDevice)
 {
-    Y_UNUSED(originalRequest);
-    Y_UNUSED(blockRangeSplittedByDeviceBorders);
-    Y_UNUSED(partitionsPerDevice);
-    return {};
+    if constexpr (std::is_same_v<TMethod, TEvService::TReadBlocksMethod>) {
+        return SplitRequestRead(
+            originalRequest,
+            blockRangeSplittedByDeviceBorders,
+            std::move(partitionsPerDevice));
+    } else if constexpr (std::is_same_v<TMethod, TEvService::TReadBlocksMethod>)
+    {
+        return SplitRequestReadLocal(
+            originalRequest,
+            blockRangeSplittedByDeviceBorders,
+            std::move(partitionsPerDevice));
+    } else {
+        return {};
+    }
 }
-
-template <>
-std::optional<TSplittedRequest<TEvService::TReadBlocksMethod>> SplitRequest(
-    const NProto::TReadBlocksRequest& originalRequest,
-    const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    TVector<THashSet<NActors::TActorId>> partitionsPerDevice);
-
-template <>
-std::optional<TSplittedRequest<TEvService::TReadBlocksLocalMethod>>
-SplitRequest(
-    const NProto::TReadBlocksLocalRequest& originalRequest,
-    const TVector<TBlockRange64>& blockRangeSplittedByDeviceBorders,
-    TVector<THashSet<NActors::TActorId>> partitionsPerDevice);
 
 template <typename TMethod>
 struct TUnifyResponsesContext

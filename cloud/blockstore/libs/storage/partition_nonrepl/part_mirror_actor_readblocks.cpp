@@ -654,14 +654,15 @@ void TSplittedRequestActor<TMethod>::HandlePoisonPill(
 
 ////////////////////////////////////////////////////////////////////////////////
 
-TResultOrError<THashSet<NActors::TActorId>>
+TResultOrError<TVector<NActors::TActorId>>
 TMirrorPartitionActor::GetPartitionsToReadBlockRange(
     const TBlockRange64 blockRange)
 {
-    THashSet<TActorId> replicaActorIds;
+    TVector<TActorId> replicaActorIds;
     const ui32 readReplicaCount = Min<ui32>(
         Max<ui32>(1, Config->GetMirrorReadReplicaCount()),
         State.GetReplicaInfos().size());
+    replicaActorIds.reserve(readReplicaCount);
     for (ui32 i = 0; i < readReplicaCount; ++i) {
         TActorId replicaActorId;
         const auto error = State.NextReadReplica(blockRange, &replicaActorId);
@@ -669,9 +670,10 @@ TMirrorPartitionActor::GetPartitionsToReadBlockRange(
             return error;
         }
 
-        if (!replicaActorIds.insert(replicaActorId).second) {
+        if (FindPtr(replicaActorIds, replicaActorId)) {
             break;
         }
+        replicaActorIds.emplace_back(replicaActorId);
     }
     return replicaActorIds;
 }
@@ -743,8 +745,9 @@ void TMirrorPartitionActor::ReadBlocks(
         return;
     }
 
-    auto blockRangeSplittedByDeviceBorders = State.SplitRangeByDeviceBorders(blockRange);
-    TVector<THashSet<TActorId>> actorIdsForRequests;
+    auto blockRangeSplittedByDeviceBorders =
+        State.SplitRangeByDeviceBorders(blockRange);
+    TVector<TVector<TActorId>> actorIdsForRequests;
     for (auto blockSubRange: blockRangeSplittedByDeviceBorders) {
         auto actorIdsOrError = GetPartitionsToReadBlockRange(blockSubRange);
         if (HasError(actorIdsOrError)) {
