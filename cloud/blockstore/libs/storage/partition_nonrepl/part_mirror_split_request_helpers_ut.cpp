@@ -65,7 +65,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
             NSplitRequest::SplitRequest<TEvService::TReadBlocksMethod>(
                 request,
                 blockRangeSplittedByDeviceBorders,
-                actorsForEachRequests);
+                TVector(actorsForEachRequests));
 
         UNIT_ASSERT(maybeSplittedRequest.has_value());
         auto splittedRequest = std::move(maybeSplittedRequest.value());
@@ -157,7 +157,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
             NSplitRequest::SplitRequest<TEvService::TReadBlocksLocalMethod>(
                 request,
                 blockRangeSplittedByDeviceBorders,
-                actorsForEachRequests);
+                TVector(actorsForEachRequests));
 
         UNIT_ASSERT(maybeSplittedRequest.has_value());
         auto splittedRequest = std::move(maybeSplittedRequest.value());
@@ -268,7 +268,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
             NSplitRequest::SplitRequest<TEvService::TReadBlocksLocalMethod>(
                 request,
                 blockRangeSplittedByDeviceBorders,
-                std::move(actorsForEachRequests));
+                actorsForEachRequests);
 
         UNIT_ASSERT(!maybeSplittedRequest.has_value());
     }
@@ -316,7 +316,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
             NSplitRequest::SplitRequest<TEvService::TReadBlocksLocalMethod>(
                 request,
                 blockRangeSplittedByDeviceBorders,
-                actorsForEachRequests);
+                TVector(actorsForEachRequests));
 
         UNIT_ASSERT(!maybeSplittedRequest.has_value());
     }
@@ -330,6 +330,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
         const size_t iterationsCount = 20;
 
         const size_t blockSize = 100;
+        size_t throttlerDelaySum = 0;
         for (size_t blocksCount = 1; blocksCount <= iterationsCount;
              ++blocksCount)
         {
@@ -348,6 +349,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
             }
 
             response.SetThrottlerDelay(blocksCount);
+            throttlerDelaySum += blocksCount;
             response.SetAllZeroes(false);
             responses.push_back({std::move(response), blocksCount});
         }
@@ -357,7 +359,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
         UNIT_ASSERT(!HasError(unifiedResponse.GetError()));
         UNIT_ASSERT_VALUES_EQUAL(
             unifiedResponse.GetThrottlerDelay(),
-            iterationsCount);
+            throttlerDelaySum);
         UNIT_ASSERT(!unifiedResponse.GetAllZeroes());
 
         size_t blocksReviewed = 0;

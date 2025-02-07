@@ -58,7 +58,7 @@ std::optional<TSplittedRequest<TMethod>> SplitRequest(
             originalRequest,
             blockRangeSplittedByDeviceBorders,
             std::move(partitionsPerDevice));
-    } else if constexpr (std::is_same_v<TMethod, TEvService::TReadBlocksMethod>)
+    } else if constexpr (std::is_same_v<TMethod, TEvService::TReadBlocksLocalMethod>)
     {
         return SplitRequestReadLocal(
             originalRequest,
