@@ -66,7 +66,9 @@ public:
         ui64 diskStateSeqNo,
         TVector<TDiskId> outdatedVolumes);
 
-    void AllowNotifications(const TDiskId& diskId, ENotificationLevel notificationLevel);
+    void AllowNotifications(
+        const TDiskId& diskId,
+        ENotificationLevel notificationLevel);
     void DeleteDisk(TDiskRegistryDatabase& db, const TDiskId& diskId);
 
     void AddUserNotification(

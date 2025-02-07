@@ -109,7 +109,9 @@ bool TNotificationSystem::IsNotificationSupported(const TDiskId& diskId, ENotifi
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void TNotificationSystem::AllowNotifications(const TDiskId& diskId, ENotificationLevel notificationLevel)
+void TNotificationSystem::AllowNotifications(
+    const TDiskId& diskId,
+    ENotificationLevel notificationLevel)
 {
     SupportsNotifications[diskId] = notificationLevel;
 }
