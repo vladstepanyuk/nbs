@@ -102,6 +102,12 @@ void TDiskRegistryActor::HandlePublishDiskStates(
     for (const auto& u: State->GetDiskStateUpdates()) {
         const auto& state = OverrideDiskState(u.State);
 
+        LOG_ERROR(
+            ctx,
+            TBlockStoreComponents::DISK_REGISTRY,
+            "[%s] DISK STATE UPDATE",
+            state.GetDiskId().c_str());
+
         TString s;
         const bool ok = state.SerializeToString(&s);
         Y_DEBUG_ABORT_UNLESS(ok);

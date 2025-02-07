@@ -11167,12 +11167,18 @@ Y_UNIT_TEST_SUITE(TDiskRegistryStateTest)
             online.MutableDiskBackOnline()->SetDiskId(diskId);
 
             ui64 seqNo = 0;
-            auto add = [&state, &db, &seqNo] (auto notif) {
+            auto add = [&state, &db, &seqNo](auto notif)
+            {
                 notif.SetSeqNo(++seqNo);
-                state.AddUserNotification(db, std::move(notif));
+                state.AddUserNotification(
+                    db,
+                    std::move(notif),
+                    NDiskRegistry::ENotificationLevel::AllNotifications);
             };
 
-            state.AllowNotifications(diskId);
+            state.AllowNotifications(
+                diskId,
+                NDiskRegistry::ENotificationLevel::AllNotifications);
 
             add(error);
             add(error);
