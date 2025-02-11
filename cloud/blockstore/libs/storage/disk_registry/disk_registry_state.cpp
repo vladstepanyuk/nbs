@@ -430,7 +430,7 @@ void TDiskRegistryState::AllowNotifications(
 
     // currently we don't want to notify users about mirrored disks errors since
     // they are not supposed to break
-    if (disk.MasterDiskId || IsReliableDiskRegistryMediaKind(disk.MediaKind)) {
+    if (disk.ReplicaCount > 0) {
         NotificationSystem.AllowNotifications(
             diskId,
             NDiskRegistry::ENotificationLevel::InfoNotifications);

@@ -143,7 +143,7 @@ void TNotificationSystem::AddUserNotification(
     const auto& id = GetEntityId(notification);
 
     // Note: Only disk events supported at the moment
-    if (IsNotificationSupported(id, level)) {
+    if (!IsNotificationSupported(id, level)) {
         return;
     }
 
