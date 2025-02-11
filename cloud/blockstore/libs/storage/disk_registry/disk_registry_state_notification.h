@@ -8,7 +8,7 @@ namespace NCloud::NBlockStore::NStorage::NDiskRegistry {
 
 enum class ENotificationLevel
 {
-    InfoNotifications = 0,
+    MigrationNotifications = 0,
     AllNotifications = 1,
 };
 

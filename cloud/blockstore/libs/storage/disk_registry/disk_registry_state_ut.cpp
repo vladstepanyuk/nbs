@@ -11257,7 +11257,7 @@ Y_UNIT_TEST_SUITE(TDiskRegistryStateTest)
             state.AddUserNotification(
                 db,
                 std::move(notif),
-                NDiskRegistry::ENotificationLevel::InfoNotifications);
+                NDiskRegistry::ENotificationLevel::MigrationNotifications);
         };
 
         executor.WriteTx(
@@ -11271,7 +11271,7 @@ Y_UNIT_TEST_SUITE(TDiskRegistryStateTest)
 
                 state.AllowNotifications(
                     diskId,
-                    NDiskRegistry::ENotificationLevel::InfoNotifications);
+                    NDiskRegistry::ENotificationLevel::MigrationNotifications);
 
                 add(db, error);
 

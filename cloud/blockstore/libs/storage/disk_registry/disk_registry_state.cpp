@@ -433,7 +433,7 @@ void TDiskRegistryState::AllowNotifications(
     if (disk.ReplicaCount > 0) {
         NotificationSystem.AllowNotifications(
             diskId,
-            NDiskRegistry::ENotificationLevel::InfoNotifications);
+            NDiskRegistry::ENotificationLevel::MigrationNotifications);
         return;
     }
 

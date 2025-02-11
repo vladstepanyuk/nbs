@@ -311,7 +311,7 @@ void TNotificationSystem::OnDiskStateChanged(
     db.WriteLastDiskStateSeqNo(DiskStateSeqNo);
 
     ENotificationLevel diskStateChangeNotificationLevel =
-        ENotificationLevel::InfoNotifications;
+        ENotificationLevel::MigrationNotifications;
     if (newState >= NProto::DISK_STATE_TEMPORARILY_UNAVAILABLE) {
         if (oldState < NProto::DISK_STATE_TEMPORARILY_UNAVAILABLE) {
             diskStateChangeNotificationLevel =
