@@ -11242,26 +11242,14 @@ Y_UNIT_TEST_SUITE(TDiskRegistryStateTest)
         const TString diskId = "disk";
         ui64 seqNo = 0;
 
-        auto add = [&state, &seqNo](auto& db, auto notif)
+        auto add = [&state, &seqNo](auto& db, auto notif, auto level)
         {
             notif.SetSeqNo(++seqNo);
-            state.AddUserNotification(
-                db,
-                std::move(notif),
-                NDiskRegistry::ENotificationLevel::AllNotifications);
-        };
-
-        auto addInfo = [&state, &seqNo](auto& db, auto notif)
-        {
-            notif.SetSeqNo(++seqNo);
-            state.AddUserNotification(
-                db,
-                std::move(notif),
-                NDiskRegistry::ENotificationLevel::MigrationNotifications);
+            state.AddUserNotification(db, std::move(notif), level);
         };
 
         executor.WriteTx(
-            [&state, &diskId](TDiskRegistryDatabase db)
+            [&state, &diskId, &add](TDiskRegistryDatabase db)
             {
                 NProto::TUserNotification error;
                 error.MutableDiskError()->SetDiskId(diskId);
@@ -11273,19 +11261,24 @@ Y_UNIT_TEST_SUITE(TDiskRegistryStateTest)
                     diskId,
                     NDiskRegistry::ENotificationLevel::MigrationNotifications);
 
-                add(db, error);
-
-                addInfo(db, online);
+                add(db,
+                    error,
+                    NDiskRegistry::ENotificationLevel::AllNotifications);
+                add(db,
+                    online,
+                    NDiskRegistry::ENotificationLevel::MigrationNotifications);
             });
 
-        TVector<NProto::TUserNotification> userNotifications;
-        state.GetUserNotifications(userNotifications);
+        {
+            TVector<NProto::TUserNotification> userNotifications;
+            state.GetUserNotifications(userNotifications);
 
-        UNIT_ASSERT_VALUES_EQUAL(1, userNotifications.size());
-        UNIT_ASSERT(userNotifications[0].HasDiskBackOnline());
+            UNIT_ASSERT_VALUES_EQUAL(1, userNotifications.size());
+            UNIT_ASSERT(userNotifications[0].HasDiskBackOnline());
+        }
 
         executor.WriteTx(
-            [&state, &diskId](TDiskRegistryDatabase db)
+            [&state, &diskId, &add](TDiskRegistryDatabase db)
             {
                 NProto::TUserNotification error;
                 error.MutableDiskError()->SetDiskId(diskId);
@@ -11294,18 +11287,22 @@ Y_UNIT_TEST_SUITE(TDiskRegistryStateTest)
                     diskId,
                     NDiskRegistry::ENotificationLevel::AllNotifications);
 
-                add(db, error);
+                add(db,
+                    error,
+                    NDiskRegistry::ENotificationLevel::AllNotifications);
             });
 
-        TVector<NProto::TUserNotification> userNotifications;
-        state.GetUserNotifications(userNotifications);
-        SortBy(
-            userNotifications,
-            [](const auto& notif) { return notif.GetSeqNo(); });
+        {
+            TVector<NProto::TUserNotification> userNotifications;
+            state.GetUserNotifications(userNotifications);
+            SortBy(
+                userNotifications,
+                [](const auto& notif) { return notif.GetSeqNo(); });
 
-        UNIT_ASSERT_VALUES_EQUAL(2, userNotifications.size());
-        UNIT_ASSERT(userNotifications[0].HasDiskBackOnline());
-        UNIT_ASSERT(userNotifications[1].HasDiskError());
+            UNIT_ASSERT_VALUES_EQUAL(2, userNotifications.size());
+            UNIT_ASSERT(userNotifications[0].HasDiskBackOnline());
+            UNIT_ASSERT(userNotifications[1].HasDiskError());
+        }
     }
 
     Y_UNIT_TEST(ShouldPullInLegacyDiskErrorUserNotifications)
