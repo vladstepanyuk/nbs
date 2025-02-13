@@ -2,7 +2,7 @@
 
 #include <library/cpp/testing/unittest/registar.h>
 
-namespace NCloud::NBlockStore::NStorage::NSplitRequest {
+namespace NCloud::NBlockStore::NStorage {
 
 using namespace NActors;
 
@@ -277,7 +277,7 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
 
     Y_UNIT_TEST(ShouldCorrectlyMergeReadResponses)
     {
-        TVector<TSplitReadBlocksResponse> responses;
+        TVector<NProto::TReadBlocksResponse> responses;
 
         const size_t iterationsCount = 20;
 
@@ -303,10 +303,10 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
             response.SetThrottlerDelay(blocksCount);
             throttlerDelaySum += blocksCount;
             response.SetAllZeroes(false);
-            responses.emplace_back(std::move(response), blocksCount);
+            responses.emplace_back(std::move(response));
         }
 
-        auto mergedResponse = MergeReadResponses(responses, blockSize);
+        auto mergedResponse = MergeReadResponses(responses);
         UNIT_ASSERT(!HasError(mergedResponse.GetError()));
         UNIT_ASSERT_VALUES_EQUAL(
             mergedResponse.GetThrottlerDelay(),
@@ -329,62 +329,8 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
         }
     }
 
-    Y_UNIT_TEST(ShouldFillZeroedResponses)
-    {
-        const size_t blockSize = 100;
-
-        NProto::TReadBlocksResponse resp1;
-        resp1.ClearBlocks();
-        resp1.SetAllZeroes(true);
-
-        NProto::TReadBlocksResponse resp2;
-        resp2.ClearBlocks();
-        resp2.SetAllZeroes(false);
-        resp2.MutableBlocks()->AddBuffers(TString(blockSize, '1'));
-
-        TVector<TSplitReadBlocksResponse> responses{
-            {.Response = resp1, .BlocksCountRequested = 1},
-            {.Response = resp2, .BlocksCountRequested = 1},
-        };
-
-        auto mergedResponse = MergeReadResponses(responses, blockSize);
-
-        UNIT_ASSERT_VALUES_EQUAL(mergedResponse.GetBlocks().BuffersSize(), 2);
-        UNIT_ASSERT_VALUES_EQUAL(
-            mergedResponse.GetBlocks().GetBuffers()[0],
-            TString(blockSize, '\0'));
-        UNIT_ASSERT_VALUES_EQUAL(
-            mergedResponse.GetBlocks().GetBuffers()[1],
-            TString(blockSize, '1'));
-    }
-
-    Y_UNIT_TEST(ShouldCorrectlyProcessAllZeros)
-    {
-        const size_t blockSize = 100;
-
-        NProto::TReadBlocksResponse resp1;
-        resp1.ClearBlocks();
-        resp1.SetAllZeroes(true);
-
-        NProto::TReadBlocksResponse resp2;
-        resp2.ClearBlocks();
-        resp2.SetAllZeroes(true);
-
-        TVector<TSplitReadBlocksResponse> responses{
-            {.Response = resp1, .BlocksCountRequested = 1},
-            {.Response = resp2, .BlocksCountRequested = 1},
-        };
-
-        auto mergedResponse = MergeReadResponses(responses, blockSize);
-
-        UNIT_ASSERT_VALUES_EQUAL(mergedResponse.GetBlocks().BuffersSize(), 0);
-        UNIT_ASSERT(mergedResponse.GetAllZeroes());
-    }
-
     Y_UNIT_TEST(ShouldCorrectlyProcessErrors)
     {
-        const size_t blockSize = 100;
-
         NProto::TReadBlocksResponse resp1;
         resp1.MutableError()->CopyFrom(MakeError(E_REJECTED, "reject"));
 
@@ -392,12 +338,9 @@ Y_UNIT_TEST_SUITE(TSplitRequestTest)
         resp2.ClearBlocks();
         resp2.SetAllZeroes(true);
 
-        TVector<TSplitReadBlocksResponse> responses{
-            {.Response = resp1, .BlocksCountRequested = 1},
-            {.Response = resp2, .BlocksCountRequested = 1},
-        };
+        TVector<NProto::TReadBlocksResponse> responses{resp1, resp2};
 
-        auto mergedResponse = MergeReadResponses(responses, blockSize);
+        auto mergedResponse = MergeReadResponses(responses);
 
         UNIT_ASSERT_VALUES_EQUAL(
             mergedResponse.GetError().GetCode(),

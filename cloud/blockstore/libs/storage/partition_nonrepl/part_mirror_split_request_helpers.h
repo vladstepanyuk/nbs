@@ -5,31 +5,21 @@
 
 #include <contrib/ydb/library/actors/core/actorid.h>
 
-namespace NCloud::NBlockStore::NStorage::NSplitRequest {
+namespace NCloud::NBlockStore::NStorage {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-template <typename TMethod>
-using TResponseRecordType = TMethod::TResponse::ProtoRecordType;
-
 auto SplitReadRequest(
     const NProto::TReadBlocksRequest& originalRequest,
-    std::span<const TBlockRange64> blockRangeSplittedByDeviceBorders)
+    std::span<const TBlockRange64> requestBlockRanges)
     -> TVector<NProto::TReadBlocksRequest>;
 
 auto SplitReadRequest(
     const NProto::TReadBlocksLocalRequest& originalRequest,
-    std::span<const TBlockRange64> blockRangeSplittedByDeviceBorders)
+    std::span<const TBlockRange64> requestBlockRanges)
     -> TVector<NProto::TReadBlocksLocalRequest>;
 
-struct TSplitReadBlocksResponse
-{
-    NProto::TReadBlocksResponse Response;
-    ui64 BlocksCountRequested = 0;
-};
+auto MergeReadResponses(std::span<NProto::TReadBlocksResponse> responsesToMerge)
+    -> NProto::TReadBlocksResponse;
 
-auto MergeReadResponses(
-    std::span<TSplitReadBlocksResponse> responsesToMerge,
-    size_t blockSize) -> NProto::TReadBlocksResponse;
-
-}   // namespace NCloud::NBlockStore::NStorage::NSplitRequest
+}   // namespace NCloud::NBlockStore::NStorage

@@ -188,6 +188,11 @@ private:
         const typename TMethod::TRequest::TPtr& ev,
         const NActors::TActorContext& ctx);
 
+    template <typename TMethod>
+    NProto::TError SplitReadBlocks(
+        const typename TMethod::TRequest::TPtr& ev,
+        const NActors::TActorContext& ctx);
+
     TResultOrError<TVector<NActors::TActorId>> SelectReplicasToReadFrom(
         ui32 replicaIndex,
         TBlockRange64 blockRange,

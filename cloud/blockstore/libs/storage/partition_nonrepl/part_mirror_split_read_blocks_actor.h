@@ -10,7 +10,7 @@
 #include <contrib/ydb/library/actors/core/events.h>
 #include <contrib/ydb/library/actors/core/hfunc.h>
 
-namespace NCloud::NBlockStore::NStorage::NSplitRequest {
+namespace NCloud::NBlockStore::NStorage {
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -20,6 +20,7 @@ class TSplitReadBlocksActor final
 {
 private:
     using TRequestProtoType = TMethod::TRequest::ProtoRecordType;
+    using TResponseProtoType = TMethod::TResponse::ProtoRecordType;
 
 private:
     const TRequestInfoPtr RequestInfo;
@@ -29,7 +30,7 @@ private:
     const ui64 RequestIdentityKey;
 
     ui32 PendingRequests = 0;
-    TVector<TSplitReadBlocksResponse> Responses;
+    TVector<TResponseProtoType> Responses;
 
     using TBase = NActors::TActorBootstrapped<TSplitReadBlocksActor<TMethod>>;
 
@@ -51,7 +52,6 @@ public:
     {
         Responses.resize(Requests.size());
         for (size_t i = 0; i < Requests.size(); ++i) {
-            Responses[i].BlocksCountRequested = Requests[i].GetBlocksCount();
             auto req = std::make_unique<typename TMethod::TRequest>();
             req->Record = std::move(Requests[i]);
             NCloud::Send(
@@ -71,7 +71,7 @@ private:
         auto response =
             std::make_unique<typename TMethod::TResponse>(std::move(error));
         if (!HasError(response->GetError())) {
-            response->Record = MergeReadResponses(Responses, BlockSize);
+            response->Record = MergeReadResponses(Responses);
         }
 
         auto completion = std::make_unique<
@@ -95,7 +95,7 @@ private:
         }
 
         auto responseIdx = ev->Cookie - RequestInfo->Cookie;
-        Responses[responseIdx].Response = std::move(msg->Record);
+        Responses[responseIdx] = std::move(msg->Record);
 
         if (--PendingRequests == 0) {
             ReplyAndDie(ctx, {});
@@ -135,4 +135,4 @@ private:
     }
 };
 
-}   // namespace NCloud::NBlockStore::NStorage::NSplitRequest
+}   // namespace NCloud::NBlockStore::NStorage
